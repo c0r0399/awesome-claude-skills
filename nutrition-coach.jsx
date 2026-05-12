@@ -4,7 +4,8 @@ import {
   Check, ChevronRight, ChevronDown, Clock, Flame, AlertCircle,
   Camera, Send, TrendingUp, Calendar, ShoppingCart, BarChart3, Zap,
   Heart, Droplets, Grid3x3, Copy, X, Dumbbell, Share2, Download,
-  RefreshCw, LineChart, TrendingDown, Activity
+  RefreshCw, LineChart, TrendingDown, Activity, Bell, Settings,
+  Search, Filter, Apple, Watch, Smartphone
 } from 'lucide-react';
 
 // ============================================================================
@@ -84,6 +85,25 @@ function parseClaudeJson(text) {
 }
 
 // ============================================================================
+// NOTIFICATIONS HELPER
+// ============================================================================
+
+const sendNotification = (title, options = {}) => {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, {
+      icon: '🥗',
+      ...options
+    });
+  }
+};
+
+const requestNotificationPermission = async () => {
+  if ('Notification' in window && Notification.permission === 'default') {
+    await Notification.requestPermission();
+  }
+};
+
+// ============================================================================
 // UTILS
 // ============================================================================
 
@@ -103,6 +123,32 @@ const calculateMacrosFromRecipes = (history) => {
   }), { kcal: 0, protein: 0, carbs: 0, fats: 0 });
 
   return { totals, count: thisWeek.length };
+};
+
+const getMacrosByMeal = (history) => {
+  const today = new Date().toISOString().split('T')[0];
+  const mealLog = StorageAPI.get('meals:log', {});
+  const todayMeals = mealLog[today] || {};
+
+  return {
+    breakfast: todayMeals.breakfast || { kcal: 0, protein: 0, carbs: 0, fats: 0 },
+    lunch: todayMeals.lunch || { kcal: 0, protein: 0, carbs: 0, fats: 0 },
+    dinner: todayMeals.dinner || { kcal: 0, protein: 0, carbs: 0, fats: 0 },
+    snacks: todayMeals.snacks || { kcal: 0, protein: 0, carbs: 0, fats: 0 }
+  };
+};
+
+const getTodayWater = () => {
+  const today = new Date().toISOString().split('T')[0];
+  const waterLog = StorageAPI.get('water:log', {});
+  return waterLog[today] || 0;
+};
+
+const saveTodayWater = (amount) => {
+  const today = new Date().toISOString().split('T')[0];
+  const waterLog = StorageAPI.get('water:log', {});
+  waterLog[today] = amount;
+  StorageAPI.set('water:log', waterLog);
 };
 
 const getMonthlTrends = (history) => {
@@ -126,19 +172,6 @@ const getMonthlTrends = (history) => {
       protein: Math.round(data.protein / data.days.size),
       daysCooked: data.days.size
     }));
-};
-
-const getTodayWater = () => {
-  const today = new Date().toISOString().split('T')[0];
-  const waterLog = StorageAPI.get('water:log', {});
-  return waterLog[today] || 0;
-};
-
-const saveTodayWater = (amount) => {
-  const today = new Date().toISOString().split('T')[0];
-  const waterLog = StorageAPI.get('water:log', {});
-  waterLog[today] = amount;
-  StorageAPI.set('water:log', waterLog);
 };
 
 const exportToCSV = (profile, pantry, history, workouts) => {
@@ -435,6 +468,643 @@ const WorkoutCard = ({ workout, onDelete }) => (
     </div>
   </div>
 );
+
+// ============================================================================
+// MODAL COMPONENTS
+// ============================================================================
+
+const MealLoggingModal = ({ date, onSave, onClose }) => {
+  const mealLog = StorageAPI.get('meals:log', {});
+  const dateStr = date.toISOString().split('T')[0];
+  const todayMeals = mealLog[dateStr] || {
+    breakfast: { kcal: 0, protein: 0, carbs: 0, fats: 0 },
+    lunch: { kcal: 0, protein: 0, carbs: 0, fats: 0 },
+    dinner: { kcal: 0, protein: 0, carbs: 0, fats: 0 },
+    snacks: { kcal: 0, protein: 0, carbs: 0, fats: 0 }
+  };
+
+  const [meals, setMeals] = useState(todayMeals);
+
+  const handleMealChange = (meal, macro, value) => {
+    setMeals({
+      ...meals,
+      [meal]: {
+        ...meals[meal],
+        [macro]: parseInt(value) || 0
+      }
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Macros por comida</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        {['breakfast', 'lunch', 'dinner', 'snacks'].map(meal => (
+          <div key={meal} className="mb-6 pb-6 border-b border-gray-200 last:border-0">
+            <h3 className="font-semibold text-gray-900 mb-4 capitalize">
+              {meal === 'breakfast' ? '🍳 Desayuno' : meal === 'lunch' ? '🥗 Almuerzo' : meal === 'dinner' ? '🍽️ Cena' : '🍿 Snacks'}
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Kcal</label>
+                <input
+                  type="number"
+                  value={meals[meal].kcal}
+                  onChange={(e) => handleMealChange(meal, 'kcal', e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Proteína (g)</label>
+                <input
+                  type="number"
+                  value={meals[meal].protein}
+                  onChange={(e) => handleMealChange(meal, 'protein', e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Carbos (g)</label>
+                <input
+                  type="number"
+                  value={meals[meal].carbs}
+                  onChange={(e) => handleMealChange(meal, 'carbs', e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Grasas (g)</label>
+                <input
+                  type="number"
+                  value={meals[meal].fats}
+                  onChange={(e) => handleMealChange(meal, 'fats', e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="0"
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+
+        <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-200 mb-6">
+          <p className="text-xs text-emerald-700 font-semibold uppercase mb-3">Totales del día</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xl font-bold text-emerald-700">{Object.values(meals).reduce((acc, m) => acc + m.kcal, 0)}</p>
+              <p className="text-xs text-emerald-600">kcal</p>
+            </div>
+            <div>
+              <p className="text-xl font-bold text-orange-500">{Object.values(meals).reduce((acc, m) => acc + m.protein, 0)}g</p>
+              <p className="text-xs text-gray-600">proteína</p>
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            onSave(meals);
+            onClose();
+          }}
+          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors mb-3"
+        >
+          Guardar macros
+        </button>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const HealthSyncModal = ({ onClose, profile }) => {
+  const [syncStatus, setSyncStatus] = useState(StorageAPI.get('health:sync', { fitbit: false, apple: false }));
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async (provider) => {
+    setSyncing(true);
+
+    // Simular sincronización (en producción sería OAuth real)
+    setTimeout(() => {
+      const updated = { ...syncStatus, [provider]: !syncStatus[provider] };
+      setSyncStatus(updated);
+      StorageAPI.set('health:sync', updated);
+
+      if (updated[provider]) {
+        sendNotification(`✅ ${provider === 'fitbit' ? 'Fitbit' : 'Apple Health'} sincronizado`, {
+          body: 'Tu actividad está conectada'
+        });
+      }
+      setSyncing(false);
+    }, 1500);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Conectar dispositivos</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-3 mb-6">
+          <button
+            onClick={() => handleSync('fitbit')}
+            disabled={syncing}
+            className={`w-full p-4 rounded-2xl border-2 transition-colors flex items-start gap-3 ${
+              syncStatus.fitbit
+                ? 'bg-blue-50 border-blue-500'
+                : 'bg-white border-gray-200 hover:border-gray-300'
+            }`}
+          >
+            <div className="flex-1">
+              <p className="font-semibold text-gray-900">Fitbit</p>
+              <p className="text-xs text-gray-500 mt-1">
+                {syncStatus.fitbit ? '✅ Conectado' : 'Sincronizar actividad'}
+              </p>
+            </div>
+            {syncStatus.fitbit && <Check size={18} className="text-blue-600 flex-shrink-0 mt-1" />}
+          </button>
+
+          <button
+            onClick={() => handleSync('apple')}
+            disabled={syncing}
+            className={`w-full p-4 rounded-2xl border-2 transition-colors flex items-start gap-3 ${
+              syncStatus.apple
+                ? 'bg-gray-50 border-gray-900'
+                : 'bg-white border-gray-200 hover:border-gray-300'
+            }`}
+          >
+            <div className="flex-1">
+              <p className="font-semibold text-gray-900">Apple Health</p>
+              <p className="text-xs text-gray-500 mt-1">
+                {syncStatus.apple ? '✅ Conectado' : 'Sincronizar con iOS'}
+              </p>
+            </div>
+            {syncStatus.apple && <Check size={18} className="text-gray-900 flex-shrink-0 mt-1" />}
+          </button>
+        </div>
+
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700 mb-6">
+          <p className="font-semibold mb-1">¿Qué se sincroniza?</p>
+          <ul className="space-y-1">
+            <li>✓ Pasos y calorías quemadas</li>
+            <li>✓ Sueño y ritmo cardíaco</li>
+            <li>✓ Datos en tiempo real</li>
+          </ul>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const SettingsModal = ({ onClose, notificationsEnabled, onToggleNotifications }) => {
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Configuración</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
+            <div>
+              <p className="font-semibold text-gray-900">Notificaciones</p>
+              <p className="text-xs text-gray-600 mt-1">Recordatorios de agua, comidas y entrenamientos</p>
+            </div>
+            <button
+              onClick={() => onToggleNotifications()}
+              className={`w-12 h-6 rounded-full transition-colors ${
+                notificationsEnabled ? 'bg-emerald-600' : 'bg-gray-300'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full bg-white transition-transform ${
+                  notificationsEnabled ? 'translate-x-6' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-700 mb-6">
+          <p className="font-semibold">💡 Pro tip: Habilita notificaciones para no saltarte comidas ni agua</p>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const AddWorkoutModal = ({ onAdd, onClose }) => {
+  const [type, setType] = useState('fuerza');
+  const [duration, setDuration] = useState('45');
+  const [exercises, setExercises] = useState([{ name: '', sets: '3', reps: '10' }]);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Agregar entrenamiento</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          <div>
+            <label className="block text-sm font-semibold text-gray-900 mb-2">Tipo</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="fuerza">Fuerza</option>
+              <option value="cardio">Cardio</option>
+              <option value="hibrido">Híbrido</option>
+              <option value="yoga">Yoga</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-900 mb-2">Duración (minutos)</label>
+            <input
+              type="number"
+              value={duration}
+              onChange={(e) => setDuration(e.target.value)}
+              className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder="45"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-900 mb-3">Ejercicios</label>
+            {exercises.map((ex, idx) => (
+              <div key={idx} className="flex gap-2 mb-3">
+                <input
+                  type="text"
+                  placeholder="Nombre"
+                  value={ex.name}
+                  onChange={(e) => {
+                    const updated = [...exercises];
+                    updated[idx].name = e.target.value;
+                    setExercises(updated);
+                  }}
+                  className="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                />
+                <input
+                  type="number"
+                  placeholder="Series"
+                  value={ex.sets}
+                  onChange={(e) => {
+                    const updated = [...exercises];
+                    updated[idx].sets = e.target.value;
+                    setExercises(updated);
+                  }}
+                  className="w-16 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                />
+                <input
+                  type="number"
+                  placeholder="Reps"
+                  value={ex.reps}
+                  onChange={(e) => {
+                    const updated = [...exercises];
+                    updated[idx].reps = e.target.value;
+                    setExercises(updated);
+                  }}
+                  className="w-16 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                />
+                {exercises.length > 1 && (
+                  <button
+                    onClick={() => setExercises(exercises.filter((_, i) => i !== idx))}
+                    className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              onClick={() => setExercises([...exercises, { name: '', sets: '3', reps: '10' }])}
+              className="text-sm text-emerald-600 font-semibold mt-2"
+            >
+              + Agregar ejercicio
+            </button>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            onAdd({
+              type,
+              duration: parseInt(duration),
+              exercises: exercises.filter(e => e.name.trim())
+            });
+            onClose();
+          }}
+          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors"
+        >
+          Guardar entrenamiento
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const FridgeModal = ({ onClose, onAnalyze, loading }) => {
+  const fileInputRef = useRef(null);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Analizar nevera</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="bg-blue-50 border-2 border-dashed border-blue-300 rounded-3xl p-8 text-center mb-6">
+          <Camera size={40} className="mx-auto text-blue-500 mb-3" />
+          <p className="text-sm font-semibold text-gray-900 mb-2">Saca una foto de tu nevera</p>
+          <p className="text-xs text-gray-600 mb-4">Claude analizará qué tienes y sugerirá recetas</p>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+            className="w-full py-3 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold transition-colors"
+          >
+            {loading ? 'Analizando...' : 'Subir foto'}
+          </button>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const base64 = reader.result.split(',')[1];
+                onAnalyze(base64, file.type || 'image/jpeg');
+              };
+              reader.readAsDataURL(file);
+            }
+          }}
+          className="hidden"
+          capture="environment"
+        />
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const ShareModal = ({ recipe, onClose }) => {
+  const shareText = `🍳 ${recipe.titulo}\n⏱️ ${recipe.tiempo_min}min | 🔥 ${recipe.macros.kcal}kcal\n\n${recipe.pasos.join('\n')}\n\n#NutritionCoach`;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Compartir receta</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-3 mb-6">
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(shareText);
+              alert('Copiado al portapapeles');
+            }}
+            className="w-full py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold flex items-center justify-center gap-2 transition-colors"
+          >
+            <Copy size={18} />
+            Copiar texto
+          </button>
+
+          <button
+            onClick={() => {
+              const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
+              window.open(whatsappUrl, '_blank');
+            }}
+            className="w-full py-3 rounded-xl bg-green-100 hover:bg-green-200 text-green-700 font-semibold flex items-center justify-center gap-2 transition-colors"
+          >
+            📱 WhatsApp
+          </button>
+        </div>
+
+        <div className="bg-gray-50 rounded-xl p-4 mb-6 max-h-48 overflow-y-auto text-sm text-gray-700">
+          <p className="whitespace-pre-wrap font-mono">{shareText}</p>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const ShoppingListModal = ({ recipes, pantry, onClose, onBuy }) => {
+  const getShoppingList = () => {
+    const needed = {};
+    recipes.forEach(recipe => {
+      recipe.ingredientes_faltan?.forEach(item => {
+        const key = item.name.toLowerCase();
+        if (!needed[key]) {
+          needed[key] = { ...item, recipes: [] };
+        }
+        needed[key].recipes.push(recipe.titulo);
+      });
+    });
+    return Object.values(needed);
+  };
+
+  const list = getShoppingList();
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[80vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Lista de compra</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            ✕
+          </button>
+        </div>
+
+        {list.length === 0 ? (
+          <p className="text-center text-gray-500 py-8">Tienes todo lo que necesitas</p>
+        ) : (
+          <div className="space-y-3 mb-6">
+            {list.map((item, idx) => (
+              <div key={idx} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
+                <div className="flex justify-between items-start">
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-900">{item.name}</p>
+                    <p className="text-sm text-gray-500 mt-1">{item.quantity} {item.unit}</p>
+                    <p className="text-xs text-gray-400 mt-1">Para: {item.recipes.join(', ')}</p>
+                  </div>
+                  <button
+                    onClick={() => onBuy(item)}
+                    className="p-2 rounded-lg hover:bg-emerald-100 text-emerald-600 transition-colors"
+                  >
+                    <Check size={18} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl bg-gray-100 text-gray-900 font-semibold hover:bg-gray-200 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const MealPrepModal = ({ recipes, onClose }) => {
+  const [weekPlan, setWeekPlan] = useState(StorageAPI.get('mealprep:plan', {}));
+  const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+  const handleSelectRecipe = (day, recipe) => {
+    const updated = { ...weekPlan, [day]: recipe };
+    setWeekPlan(updated);
+    StorageAPI.set('mealprep:plan', updated);
+  };
+
+  const getTotalMacros = () => {
+    return Object.values(weekPlan).reduce((acc, recipe) => {
+      if (!recipe?.macros) return acc;
+      return {
+        kcal: acc.kcal + recipe.macros.kcal,
+        protein: acc.protein + recipe.macros.proteina_g,
+        carbs: acc.carbs + recipe.macros.carbos_g,
+        fats: acc.fats + recipe.macros.grasas_g
+      };
+    }, { kcal: 0, protein: 0, carbs: 0, fats: 0 });
+  };
+
+  const macros = getTotalMacros();
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Planificador semanal</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          {days.map(day => (
+            <div key={day} className="border border-gray-200 rounded-xl p-4">
+              <p className="font-semibold text-gray-900 mb-3">{day}</p>
+              {weekPlan[day] ? (
+                <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
+                  <p className="font-medium text-emerald-700">{weekPlan[day].titulo}</p>
+                  <p className="text-xs text-emerald-600 mt-1">
+                    {weekPlan[day].macros.kcal}kcal • {weekPlan[day].macros.proteina_g}g prot
+                  </p>
+                  <button
+                    onClick={() => handleSelectRecipe(day, null)}
+                    className="text-xs text-emerald-600 underline mt-2 font-medium"
+                  >
+                    Cambiar
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {recipes.map((recipe, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleSelectRecipe(day, recipe)}
+                      className="w-full text-left bg-gray-50 hover:bg-gray-100 p-2 rounded-lg transition-colors text-sm"
+                    >
+                      <p className="font-medium text-gray-900">{recipe.titulo}</p>
+                      <p className="text-xs text-gray-500">{recipe.macros.kcal}kcal</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200 mb-6">
+          <p className="text-xs text-gray-500 font-semibold uppercase mb-3">Totales semanales</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-2xl font-bold text-gray-900">{Math.round(macros.kcal)}</p>
+              <p className="text-xs text-gray-600">kcal</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-orange-500">{Math.round(macros.protein)}</p>
+              <p className="text-xs text-gray-600">g proteína</p>
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
 
 // ============================================================================
 // ONBOARDING COMPONENT
@@ -734,233 +1404,6 @@ const OnboardingFlow = ({ onComplete }) => {
 };
 
 // ============================================================================
-// MODALS
-// ============================================================================
-
-const AddWorkoutModal = ({ onAdd, onClose }) => {
-  const [type, setType] = useState('fuerza');
-  const [duration, setDuration] = useState('45');
-  const [exercises, setExercises] = useState([{ name: '', sets: '3', reps: '10' }]);
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Agregar entrenamiento</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="space-y-4 mb-6">
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2">Tipo</label>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            >
-              <option value="fuerza">Fuerza</option>
-              <option value="cardio">Cardio</option>
-              <option value="hibrido">Híbrido</option>
-              <option value="yoga">Yoga</option>
-              <option value="otro">Otro</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2">Duración (minutos)</label>
-            <input
-              type="number"
-              value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-              className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              placeholder="45"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-3">Ejercicios</label>
-            {exercises.map((ex, idx) => (
-              <div key={idx} className="flex gap-2 mb-3">
-                <input
-                  type="text"
-                  placeholder="Nombre"
-                  value={ex.name}
-                  onChange={(e) => {
-                    const updated = [...exercises];
-                    updated[idx].name = e.target.value;
-                    setExercises(updated);
-                  }}
-                  className="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
-                />
-                <input
-                  type="number"
-                  placeholder="Series"
-                  value={ex.sets}
-                  onChange={(e) => {
-                    const updated = [...exercises];
-                    updated[idx].sets = e.target.value;
-                    setExercises(updated);
-                  }}
-                  className="w-16 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
-                />
-                <input
-                  type="number"
-                  placeholder="Reps"
-                  value={ex.reps}
-                  onChange={(e) => {
-                    const updated = [...exercises];
-                    updated[idx].reps = e.target.value;
-                    setExercises(updated);
-                  }}
-                  className="w-16 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
-                />
-                {exercises.length > 1 && (
-                  <button
-                    onClick={() => setExercises(exercises.filter((_, i) => i !== idx))}
-                    className="p-2 text-gray-400 hover:text-red-500 transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
-              </div>
-            ))}
-            <button
-              onClick={() => setExercises([...exercises, { name: '', sets: '3', reps: '10' }])}
-              className="text-sm text-emerald-600 font-semibold mt-2"
-            >
-              + Agregar ejercicio
-            </button>
-          </div>
-        </div>
-
-        <button
-          onClick={() => {
-            onAdd({
-              type,
-              duration: parseInt(duration),
-              exercises: exercises.filter(e => e.name.trim())
-            });
-            onClose();
-          }}
-          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors"
-        >
-          Guardar entrenamiento
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const FridgeModal = ({ onClose, onAnalyze, loading }) => {
-  const fileInputRef = useRef(null);
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Analizar nevera</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="bg-blue-50 border-2 border-dashed border-blue-300 rounded-3xl p-8 text-center mb-6">
-          <Camera size={40} className="mx-auto text-blue-500 mb-3" />
-          <p className="text-sm font-semibold text-gray-900 mb-2">Saca una foto de tu nevera</p>
-          <p className="text-xs text-gray-600 mb-4">Claude analizará qué tienes y sugerirá recetas</p>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={loading}
-            className="w-full py-3 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold transition-colors"
-          >
-            {loading ? 'Analizando...' : 'Subir foto'}
-          </button>
-        </div>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) {
-              const reader = new FileReader();
-              reader.onload = () => {
-                const base64 = reader.result.split(',')[1];
-                onAnalyze(base64, file.type || 'image/jpeg');
-              };
-              reader.readAsDataURL(file);
-            }
-          }}
-          className="hidden"
-          capture="environment"
-        />
-
-        <button
-          onClick={onClose}
-          className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
-        >
-          Cerrar
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const ShareModal = ({ recipe, onClose }) => {
-  const shareText = `🍳 ${recipe.titulo}\n⏱️ ${recipe.tiempo_min}min | 🔥 ${recipe.macros.kcal}kcal\n\n${recipe.pasos.join('\n')}\n\n#NutritionCoach`;
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Compartir receta</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="space-y-3 mb-6">
-          <button
-            onClick={() => {
-              navigator.clipboard.writeText(shareText);
-              alert('Copiado al portapapeles');
-            }}
-            className="w-full py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold flex items-center justify-center gap-2 transition-colors"
-          >
-            <Copy size={18} />
-            Copiar texto
-          </button>
-
-          <button
-            onClick={() => {
-              const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
-              window.open(whatsappUrl, '_blank');
-            }}
-            className="w-full py-3 rounded-xl bg-green-100 hover:bg-green-200 text-green-700 font-semibold flex items-center justify-center gap-2 transition-colors"
-          >
-            📱 WhatsApp
-          </button>
-        </div>
-
-        <div className="bg-gray-50 rounded-xl p-4 mb-6 max-h-48 overflow-y-auto text-sm text-gray-700">
-          <p className="whitespace-pre-wrap font-mono">{shareText}</p>
-        </div>
-
-        <button
-          onClick={onClose}
-          className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
-        >
-          Cerrar
-        </button>
-      </div>
-    </div>
-  );
-};
-
-// ============================================================================
 // STATE REDUCER
 // ============================================================================
 
@@ -1062,166 +1505,6 @@ const appReducer = (state, action) => {
 };
 
 // ============================================================================
-// SHOPPING LIST MODAL
-// ============================================================================
-
-const ShoppingListModal = ({ recipes, pantry, onClose, onBuy }) => {
-  const getShoppingList = () => {
-    const needed = {};
-    recipes.forEach(recipe => {
-      recipe.ingredientes_faltan?.forEach(item => {
-        const key = item.name.toLowerCase();
-        if (!needed[key]) {
-          needed[key] = { ...item, recipes: [] };
-        }
-        needed[key].recipes.push(recipe.titulo);
-      });
-    });
-    return Object.values(needed);
-  };
-
-  const list = getShoppingList();
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Lista de compra</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-            ✕
-          </button>
-        </div>
-
-        {list.length === 0 ? (
-          <p className="text-center text-gray-500 py-8">Tienes todo lo que necesitas</p>
-        ) : (
-          <div className="space-y-3 mb-6">
-            {list.map((item, idx) => (
-              <div key={idx} className="bg-gray-50 rounded-xl p-3 border border-gray-100">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <p className="font-semibold text-gray-900">{item.name}</p>
-                    <p className="text-sm text-gray-500 mt-1">{item.quantity} {item.unit}</p>
-                    <p className="text-xs text-gray-400 mt-1">Para: {item.recipes.join(', ')}</p>
-                  </div>
-                  <button
-                    onClick={() => onBuy(item)}
-                    className="p-2 rounded-lg hover:bg-emerald-100 text-emerald-600 transition-colors"
-                  >
-                    <Check size={18} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <button
-          onClick={onClose}
-          className="w-full py-3 rounded-xl bg-gray-100 text-gray-900 font-semibold hover:bg-gray-200 transition-colors"
-        >
-          Cerrar
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const MealPrepModal = ({ recipes, onClose }) => {
-  const [weekPlan, setWeekPlan] = useState(StorageAPI.get('mealprep:plan', {}));
-  const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-
-  const handleSelectRecipe = (day, recipe) => {
-    const updated = { ...weekPlan, [day]: recipe };
-    setWeekPlan(updated);
-    StorageAPI.set('mealprep:plan', updated);
-  };
-
-  const getTotalMacros = () => {
-    return Object.values(weekPlan).reduce((acc, recipe) => {
-      if (!recipe?.macros) return acc;
-      return {
-        kcal: acc.kcal + recipe.macros.kcal,
-        protein: acc.protein + recipe.macros.proteina_g,
-        carbs: acc.carbs + recipe.macros.carbos_g,
-        fats: acc.fats + recipe.macros.grasas_g
-      };
-    }, { kcal: 0, protein: 0, carbs: 0, fats: 0 });
-  };
-
-  const macros = getTotalMacros();
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Planificador semanal</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="space-y-4 mb-6">
-          {days.map(day => (
-            <div key={day} className="border border-gray-200 rounded-xl p-4">
-              <p className="font-semibold text-gray-900 mb-3">{day}</p>
-              {weekPlan[day] ? (
-                <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
-                  <p className="font-medium text-emerald-700">{weekPlan[day].titulo}</p>
-                  <p className="text-xs text-emerald-600 mt-1">
-                    {weekPlan[day].macros.kcal}kcal • {weekPlan[day].macros.proteina_g}g prot
-                  </p>
-                  <button
-                    onClick={() => handleSelectRecipe(day, null)}
-                    className="text-xs text-emerald-600 underline mt-2 font-medium"
-                  >
-                    Cambiar
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-32 overflow-y-auto">
-                  {recipes.map((recipe, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => handleSelectRecipe(day, recipe)}
-                      className="w-full text-left bg-gray-50 hover:bg-gray-100 p-2 rounded-lg transition-colors text-sm"
-                    >
-                      <p className="font-medium text-gray-900">{recipe.titulo}</p>
-                      <p className="text-xs text-gray-500">{recipe.macros.kcal}kcal</p>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200 mb-6">
-          <p className="text-xs text-gray-500 font-semibold uppercase mb-3">Totales semanales</p>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-2xl font-bold text-gray-900">{Math.round(macros.kcal)}</p>
-              <p className="text-xs text-gray-600">kcal</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-orange-500">{Math.round(macros.protein)}</p>
-              <p className="text-xs text-gray-600">g proteína</p>
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={onClose}
-          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors"
-        >
-          Cerrar
-        </button>
-      </div>
-    </div>
-  );
-};
-
-// ============================================================================
 // MAIN APP
 // ============================================================================
 
@@ -1233,10 +1516,16 @@ export default function PantryApp() {
   const [showAddWorkout, setShowAddWorkout] = useState(false);
   const [showFridgeAnalysis, setShowFridgeAnalysis] = useState(false);
   const [showShare, setShowShare] = useState(null);
+  const [showMealLogging, setShowMealLogging] = useState(false);
+  const [showHealthSync, setShowHealthSync] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterIngredient, setFilterIngredient] = useState('');
   const [state, dispatch] = useReducer(appReducer, initialState);
   const [profile, setProfile] = useState(null);
   const [waterToday, setWaterToday] = useState(getTodayWater());
+  const [notificationsEnabled, setNotificationsEnabled] = useState(StorageAPI.get('notif:enabled', false));
   const fileInputRef = useRef(null);
 
   // Load from storage
@@ -1258,6 +1547,32 @@ export default function PantryApp() {
     dispatch({ type: 'SET_FAVORITES', payload: savedFavorites });
     dispatch({ type: 'SET_WORKOUTS', payload: savedWorkouts });
   }, []);
+
+  // Setup notifications
+  useEffect(() => {
+    if (notificationsEnabled) {
+      requestNotificationPermission();
+
+      // Daily water reminder
+      const waterReminder = setInterval(() => {
+        sendNotification('💧 Recordatorio de agua', {
+          body: 'Has bebido 8 vasos hoy?'
+        });
+      }, 8 * 60 * 60 * 1000);
+
+      // Daily meal reminder
+      const mealReminder = setInterval(() => {
+        sendNotification('🍽️ Hora de registrar macros', {
+          body: 'Registra el almuerzo y la cena'
+        });
+      }, 12 * 60 * 60 * 1000);
+
+      return () => {
+        clearInterval(waterReminder);
+        clearInterval(mealReminder);
+      };
+    }
+  }, [notificationsEnabled]);
 
   const handleProfileComplete = () => {
     const savedProfile = StorageAPI.get('profile:user');
@@ -1299,15 +1614,12 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
       dispatch({ type: 'ADD_PANTRY_ITEMS', payload: parsed.items });
       dispatch({ type: 'SET_LOADING', payload: false });
       setShowFridgeAnalysis(false);
+      sendNotification('✅ Nevera analizada', { body: `${parsed.items.length} ingredientes agregados` });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: error.message });
       dispatch({ type: 'SET_LOADING', payload: false });
     }
   };
-
-  // =========================================================================
-  // UPLOAD TICKET
-  // =========================================================================
 
   const handleTicketUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -1363,6 +1675,7 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
         StorageAPI.set('history:tickets', tickets);
 
         dispatch({ type: 'SET_LOADING', payload: false });
+        sendNotification('✅ Ticket procesado', { body: `${parsed.items.length} ingredientes agregados` });
         setTab('pantry');
       };
       reader.readAsDataURL(file);
@@ -1371,10 +1684,6 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
       dispatch({ type: 'SET_LOADING', payload: false });
     }
   };
-
-  // =========================================================================
-  // GENERATE RECIPES
-  // =========================================================================
 
   const generateRecipes = async () => {
     if (!profile || state.pantry.length === 0) {
@@ -1422,6 +1731,7 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
 
       dispatch({ type: 'SET_RECIPES', payload: parsed.recetas });
       dispatch({ type: 'SET_LOADING', payload: false });
+      sendNotification('🍳 Recetas generadas', { body: '3 recetas personalizadas listas' });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: error.message });
       dispatch({ type: 'SET_LOADING', payload: false });
@@ -1430,6 +1740,7 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
 
   const handleCookRecipe = (recipe) => {
     dispatch({ type: 'USE_RECIPE_ITEMS', payload: recipe.ingredientes_usados, recipe });
+    sendNotification('✅ Receta marcada como cocinada', { body: 'Ingredientes descontados de despensa' });
   };
 
   if (showOnboarding && !profile) {
@@ -1438,10 +1749,22 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
 
   const { totals, count } = calculateMacrosFromRecipes(state.history);
   const monthlyTrends = getMonthlTrends(state.history);
+  const mealsByMeal = getMacrosByMeal(state.history);
   const thisMonthWorkouts = state.workouts.filter(w => {
     const date = new Date(w.timestamp);
     const now = new Date();
     return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+  });
+
+  // =========================================================================
+  // FILTERED RECIPES (by ingredient or search)
+  // =========================================================================
+
+  const filteredRecipes = state.recipes.filter(recipe => {
+    const matchesSearch = recipe.titulo.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesIngredient = filterIngredient === '' ||
+      recipe.ingredientes_usados.some(ing => ing.name.toLowerCase().includes(filterIngredient.toLowerCase()));
+    return matchesSearch && matchesIngredient;
   });
 
   // =========================================================================
@@ -1451,11 +1774,19 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
   const HomeTab = () => (
     <div className="pb-32 px-4 pt-6">
       <div className="max-w-2xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Hola 👋</h1>
-          <p className="text-gray-600 mt-1">
-            {profile?.age ? `${profile.age} años • ${profile.weight}kg • ${profile.goals?.[0] || 'salud general'}` : ''}
-          </p>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Hola 👋</h1>
+            <p className="text-gray-600 mt-1">
+              {profile?.age ? `${profile.age} años • ${profile.weight}kg • ${profile.goals?.[0] || 'salud general'}` : ''}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-3 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <Settings size={22} className="text-gray-600" />
+          </button>
         </div>
 
         <WaterTracker
@@ -1464,6 +1795,9 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
             const newAmount = waterToday + 1;
             setWaterToday(newAmount);
             saveTodayWater(newAmount);
+            if (newAmount === 8) {
+              sendNotification('💧 ¡Meta alcanzada!', { body: 'Has bebido 8 vasos hoy' });
+            }
           }}
           onRemove={() => {
             if (waterToday > 0) {
@@ -1489,6 +1823,36 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
             <p className="text-purple-100 text-xs mt-1">entrenamientos</p>
           </div>
         </div>
+
+        {mealsByMeal && (
+          <div className="bg-white rounded-3xl p-5 border border-gray-100 mb-6">
+            <h3 className="font-semibold text-gray-900 mb-4">Macros por comida (hoy)</h3>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="bg-orange-50 rounded-xl p-3">
+                <p className="text-xs text-orange-700 font-semibold">🍳 Desayuno</p>
+                <p className="text-sm font-bold text-orange-900 mt-1">{mealsByMeal.breakfast.kcal} kcal</p>
+              </div>
+              <div className="bg-green-50 rounded-xl p-3">
+                <p className="text-xs text-green-700 font-semibold">🥗 Almuerzo</p>
+                <p className="text-sm font-bold text-green-900 mt-1">{mealsByMeal.lunch.kcal} kcal</p>
+              </div>
+              <div className="bg-blue-50 rounded-xl p-3">
+                <p className="text-xs text-blue-700 font-semibold">🍽️ Cena</p>
+                <p className="text-sm font-bold text-blue-900 mt-1">{mealsByMeal.dinner.kcal} kcal</p>
+              </div>
+              <div className="bg-pink-50 rounded-xl p-3">
+                <p className="text-xs text-pink-700 font-semibold">🍿 Snacks</p>
+                <p className="text-sm font-bold text-pink-900 mt-1">{mealsByMeal.snacks.kcal} kcal</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowMealLogging(true)}
+              className="w-full py-2 rounded-lg bg-emerald-100 text-emerald-700 font-semibold hover:bg-emerald-200 transition-colors text-sm"
+            >
+              Registrar macros
+            </button>
+          </div>
+        )}
 
         {state.history.length > 0 && (
           <div className="bg-white rounded-3xl p-5 border border-gray-100 mb-6">
@@ -1662,8 +2026,8 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
 
   const RecipesTab = () => {
     const displayRecipes = showFavoritesOnly
-      ? state.recipes.filter(r => state.favorites.includes(r.titulo))
-      : state.recipes;
+      ? filteredRecipes.filter(r => state.favorites.includes(r.titulo))
+      : filteredRecipes;
 
     return (
       <div className="pb-32 px-4 pt-6">
@@ -1683,6 +2047,38 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
               </button>
             )}
           </div>
+
+          {state.recipes.length > 0 && (
+            <div className="space-y-3 mb-6">
+              <div>
+                <label className="block text-xs text-gray-600 font-semibold mb-2">Buscar receta</label>
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-3 text-gray-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                    placeholder="Ensalada, pollo..."
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-600 font-semibold mb-2">Filtrar por ingrediente</label>
+                <div className="relative">
+                  <Filter size={16} className="absolute left-3 top-3 text-gray-400" />
+                  <input
+                    type="text"
+                    value={filterIngredient}
+                    onChange={(e) => setFilterIngredient(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                    placeholder="Pollo, arroz..."
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           {state.loading ? (
             <LoadingPulse label="Buscando recetas que encajen contigo…" />
@@ -1704,19 +2100,29 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
           ) : displayRecipes.length === 0 ? (
             <EmptyState
               icon={Heart}
-              title="Sin favoritas aún"
-              description="Marca las recetas que te gusten con el corazón"
+              title="Sin resultados"
+              description={showFavoritesOnly ? "Marca las recetas que te gusten" : "Intenta otro filtro"}
               action={
-                <button
-                  onClick={() => setShowFavoritesOnly(false)}
-                  className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 transition-colors"
-                >
-                  Ver todas
-                </button>
+                showFavoritesOnly ? (
+                  <button
+                    onClick={() => setShowFavoritesOnly(false)}
+                    className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 transition-colors"
+                  >
+                    Ver todas
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 transition-colors"
+                  >
+                    Limpiar filtros
+                  </button>
+                )
               }
             />
           ) : (
             <div className="space-y-4">
+              <p className="text-xs text-gray-500 text-center">{displayRecipes.length} receta(s)</p>
               {displayRecipes.map((recipe, idx) => (
                 <div key={idx} className="relative">
                   <RecipeCard
@@ -1915,6 +2321,14 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
 
             <div className="space-y-2 pt-4">
               <button
+                onClick={() => setShowHealthSync(true)}
+                className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <Watch size={18} />
+                Conectar dispositivos
+              </button>
+
+              <button
                 onClick={() => {
                   exportToCSV(profile, state.pantry, state.history, state.workouts);
                 }}
@@ -1923,6 +2337,7 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
                 <Download size={18} />
                 Descargar datos (CSV)
               </button>
+
               <button
                 onClick={() => {
                   StorageAPI.clear('profile:user');
@@ -1932,6 +2347,8 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
                   StorageAPI.clear('water:log');
                   StorageAPI.clear('mealprep:plan');
                   StorageAPI.clear('workouts:log');
+                  StorageAPI.clear('meals:log');
+                  StorageAPI.clear('notif:enabled');
                   setShowOnboarding(true);
                 }}
                 className="w-full py-3 rounded-xl border border-red-200 text-red-600 font-semibold hover:bg-red-50 transition-colors"
@@ -1997,6 +2414,42 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
         <ShareModal
           recipe={showShare}
           onClose={() => setShowShare(null)}
+        />
+      )}
+
+      {showMealLogging && (
+        <MealLoggingModal
+          date={new Date()}
+          onSave={(meals) => {
+            const today = new Date().toISOString().split('T')[0];
+            const mealLog = StorageAPI.get('meals:log', {});
+            mealLog[today] = meals;
+            StorageAPI.set('meals:log', mealLog);
+            sendNotification('✅ Macros registrados', { body: 'Se guardaron tus macros del día' });
+          }}
+          onClose={() => setShowMealLogging(false)}
+        />
+      )}
+
+      {showHealthSync && (
+        <HealthSyncModal
+          profile={profile}
+          onClose={() => setShowHealthSync(false)}
+        />
+      )}
+
+      {showSettings && (
+        <SettingsModal
+          notificationsEnabled={notificationsEnabled}
+          onToggleNotifications={() => {
+            const newVal = !notificationsEnabled;
+            setNotificationsEnabled(newVal);
+            StorageAPI.set('notif:enabled', newVal);
+            if (newVal) {
+              sendNotification('✅ Notificaciones activadas', { body: 'Recibirás recordatorios diarios' });
+            }
+          }}
+          onClose={() => setShowSettings(false)}
         />
       )}
 
