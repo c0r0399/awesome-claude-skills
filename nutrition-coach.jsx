@@ -3,7 +3,8 @@ import {
   Home, ShoppingBag, ChefHat, User, Upload, Plus, Trash2,
   Check, ChevronRight, ChevronDown, Clock, Flame, AlertCircle,
   Camera, Send, TrendingUp, Calendar, ShoppingCart, BarChart3, Zap,
-  Heart, Droplets, Grid3x3, Copy, X
+  Heart, Droplets, Grid3x3, Copy, X, Dumbbell, Share2, Download,
+  RefreshCw, LineChart, TrendingDown, Activity
 } from 'lucide-react';
 
 // ============================================================================
@@ -104,6 +105,29 @@ const calculateMacrosFromRecipes = (history) => {
   return { totals, count: thisWeek.length };
 };
 
+const getMonthlTrends = (history) => {
+  const monthData = {};
+  history.forEach(h => {
+    const date = new Date(h.timestamp);
+    const month = date.toLocaleDateString('es-ES', { month: 'short', year: 'numeric' });
+    if (!monthData[month]) {
+      monthData[month] = { kcal: 0, protein: 0, days: new Set() };
+    }
+    monthData[month].kcal += h.macros?.kcal || 0;
+    monthData[month].protein += h.macros?.proteina_g || 0;
+    monthData[month].days.add(date.toDateString());
+  });
+
+  return Object.entries(monthData)
+    .slice(-3)
+    .map(([month, data]) => ({
+      month,
+      kcal: Math.round(data.kcal / data.days.size),
+      protein: Math.round(data.protein / data.days.size),
+      daysCooked: data.days.size
+    }));
+};
+
 const getTodayWater = () => {
   const today = new Date().toISOString().split('T')[0];
   const waterLog = StorageAPI.get('water:log', {});
@@ -117,20 +141,38 @@ const saveTodayWater = (amount) => {
   StorageAPI.set('water:log', waterLog);
 };
 
-const getWeekWater = () => {
-  const waterLog = StorageAPI.get('water:log', {});
-  const weekData = [];
-  for (let i = 6; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0];
-    weekData.push({
-      date: dateStr,
-      day: date.toLocaleDateString('es-ES', { weekday: 'short' }).slice(0, 3),
-      amount: waterLog[dateStr] || 0
-    });
-  }
-  return weekData;
+const exportToCSV = (profile, pantry, history, workouts) => {
+  let csv = 'COACH NUTRICIONAL - BACKUP\n\n';
+
+  csv += 'PERFIL\n';
+  csv += `Edad,Peso,Altura,Actividad,Objetivos,Restricciones\n`;
+  csv += `${profile.age},${profile.weight},${profile.height},${profile.activityLevel},"${profile.goals.join(';')}","${profile.restrictions.join(';')}"\n\n`;
+
+  csv += 'DESPENSA\n';
+  csv += 'Ingrediente,Cantidad,Unidad,Categoría\n';
+  pantry.forEach(item => {
+    csv += `${item.name},${item.quantity},${item.unit},${item.category}\n`;
+  });
+  csv += '\n';
+
+  csv += 'RECETAS COCINADAS\n';
+  csv += 'Fecha,Receta,Kcal,Proteína,Carbos,Grasas\n';
+  history.forEach(h => {
+    csv += `${new Date(h.timestamp).toLocaleDateString('es-ES')},${h.recipe},${h.macros.kcal},${h.macros.proteina_g},${h.macros.carbos_g},${h.macros.grasas_g}\n`;
+  });
+  csv += '\n';
+
+  csv += 'ENTRENAMIENTOS\n';
+  csv += 'Fecha,Tipo,Duración,Ejercicios\n';
+  workouts.forEach(w => {
+    csv += `${new Date(w.timestamp).toLocaleDateString('es-ES')},${w.type},${w.duration}min,"${w.exercises.map(e => `${e.name}:${e.sets}x${e.reps}`).join(';')}"\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `nutrition-coach-${new Date().toISOString().split('T')[0]}.csv`;
+  link.click();
 };
 
 // ============================================================================
@@ -193,24 +235,25 @@ const TabBar = ({ current, onChange }) => {
     { id: 'home', label: 'Inicio', icon: Home },
     { id: 'pantry', label: 'Despensa', icon: ShoppingBag },
     { id: 'recipes', label: 'Recetas', icon: ChefHat },
+    { id: 'workouts', label: 'Ejercicio', icon: Dumbbell },
     { id: 'profile', label: 'Perfil', icon: User }
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-2 py-2 z-40">
-      <div className="flex justify-around max-w-2xl mx-auto">
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-2 py-2 z-40 overflow-x-auto">
+      <div className="flex justify-around max-w-4xl mx-auto gap-1">
         {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => onChange(id)}
-            className={`flex flex-col items-center py-2 px-3 rounded-lg transition-colors ${
+            className={`flex flex-col items-center py-2 px-2 rounded-lg transition-colors whitespace-nowrap text-xs sm:text-sm ${
               current === id
                 ? 'text-emerald-600 bg-emerald-50'
                 : 'text-gray-600 hover:text-gray-900'
             }`}
           >
-            <Icon size={24} />
-            <span className="text-xs font-medium mt-1">{label}</span>
+            <Icon size={20} />
+            <span className="font-medium mt-0.5">{label}</span>
           </button>
         ))}
       </div>
@@ -244,7 +287,7 @@ const PantryCard = ({ item, onDelete }) => (
   </div>
 );
 
-const RecipeCard = ({ recipe, onCook, userPantry, isFavorite, onToggleFavorite }) => {
+const RecipeCard = ({ recipe, onCook, isFavorite, onToggleFavorite }) => {
   const hasMissingItems = recipe.ingredientes_faltan?.length > 0;
 
   return (
@@ -262,17 +305,15 @@ const RecipeCard = ({ recipe, onCook, userPantry, isFavorite, onToggleFavorite }
         </button>
       </div>
 
-      <div className="flex items-start justify-between mb-3">
-        <span className={`text-xs font-semibold px-3 py-1 rounded-full whitespace-nowrap ${
-          recipe.dificultad === 'fácil'
-            ? 'bg-emerald-100 text-emerald-700'
-            : recipe.dificultad === 'media'
-            ? 'bg-amber-100 text-amber-700'
-            : 'bg-red-100 text-red-700'
-        }`}>
-          {recipe.dificultad}
-        </span>
-      </div>
+      <span className={`text-xs font-semibold px-3 py-1 rounded-full whitespace-nowrap inline-block mb-3 ${
+        recipe.dificultad === 'fácil'
+          ? 'bg-emerald-100 text-emerald-700'
+          : recipe.dificultad === 'media'
+          ? 'bg-amber-100 text-amber-700'
+          : 'bg-red-100 text-red-700'
+      }`}>
+        {recipe.dificultad}
+      </span>
 
       <div className="grid grid-cols-3 gap-3 text-sm text-gray-600 mb-4 bg-gray-50 rounded-2xl p-3">
         <div className="flex items-center gap-1">
@@ -370,99 +411,30 @@ const WaterTracker = ({ today, onAdd, onRemove }) => (
   </div>
 );
 
-const MealPrepModal = ({ recipes, onSelect, onClose }) => {
-  const [weekPlan, setWeekPlan] = useState(StorageAPI.get('mealprep:plan', {}));
-  const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-
-  const handleSelectRecipe = (day, recipe) => {
-    const updated = { ...weekPlan, [day]: recipe };
-    setWeekPlan(updated);
-    StorageAPI.set('mealprep:plan', updated);
-  };
-
-  const getTotalMacros = () => {
-    return Object.values(weekPlan).reduce((acc, recipe) => {
-      if (!recipe?.macros) return acc;
-      return {
-        kcal: acc.kcal + recipe.macros.kcal,
-        protein: acc.protein + recipe.macros.proteina_g,
-        carbs: acc.carbs + recipe.macros.carbos_g,
-        fats: acc.fats + recipe.macros.grasas_g
-      };
-    }, { kcal: 0, protein: 0, carbs: 0, fats: 0 });
-  };
-
-  const macros = getTotalMacros();
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
-      <div className="bg-white w-full sm:max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Planificador semanal</h2>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="space-y-4 mb-6">
-          {days.map(day => (
-            <div key={day} className="border border-gray-200 rounded-xl p-4">
-              <p className="font-semibold text-gray-900 mb-3">{day}</p>
-              {weekPlan[day] ? (
-                <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
-                  <p className="font-medium text-emerald-700">{weekPlan[day].titulo}</p>
-                  <p className="text-xs text-emerald-600 mt-1">
-                    {weekPlan[day].macros.kcal}kcal • {weekPlan[day].macros.proteina_g}g prot
-                  </p>
-                  <button
-                    onClick={() => handleSelectRecipe(day, null)}
-                    className="text-xs text-emerald-600 underline mt-2 font-medium"
-                  >
-                    Cambiar
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-32 overflow-y-auto">
-                  {recipes.map((recipe, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => handleSelectRecipe(day, recipe)}
-                      className="w-full text-left bg-gray-50 hover:bg-gray-100 p-2 rounded-lg transition-colors text-sm"
-                    >
-                      <p className="font-medium text-gray-900">{recipe.titulo}</p>
-                      <p className="text-xs text-gray-500">{recipe.macros.kcal}kcal</p>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200 mb-6">
-          <p className="text-xs text-gray-500 font-semibold uppercase mb-3">Totales semanales</p>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-2xl font-bold text-gray-900">{Math.round(macros.kcal)}</p>
-              <p className="text-xs text-gray-600">kcal</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-orange-500">{Math.round(macros.protein)}</p>
-              <p className="text-xs text-gray-600">g proteína</p>
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={onClose}
-          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors"
-        >
-          Cerrar
-        </button>
+const WorkoutCard = ({ workout, onDelete }) => (
+  <div className="bg-white rounded-2xl p-4 border border-gray-100">
+    <div className="flex items-start justify-between mb-3">
+      <div>
+        <p className="font-semibold text-gray-900">{workout.type}</p>
+        <p className="text-sm text-gray-500">{new Date(workout.timestamp).toLocaleDateString('es-ES')} • {workout.duration} min</p>
       </div>
+      <button
+        onClick={() => onDelete(workout.timestamp)}
+        className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+      >
+        <Trash2 size={18} />
+      </button>
     </div>
-  );
-};
+    <div className="space-y-2">
+      {workout.exercises.map((ex, idx) => (
+        <div key={idx} className="text-sm text-gray-700 bg-gray-50 p-2 rounded-lg">
+          <span className="font-medium">{ex.name}</span>
+          <span className="text-gray-500"> • {ex.sets}x{ex.reps}</span>
+        </div>
+      ))}
+    </div>
+  </div>
+);
 
 // ============================================================================
 // ONBOARDING COMPONENT
@@ -762,6 +734,233 @@ const OnboardingFlow = ({ onComplete }) => {
 };
 
 // ============================================================================
+// MODALS
+// ============================================================================
+
+const AddWorkoutModal = ({ onAdd, onClose }) => {
+  const [type, setType] = useState('fuerza');
+  const [duration, setDuration] = useState('45');
+  const [exercises, setExercises] = useState([{ name: '', sets: '3', reps: '10' }]);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Agregar entrenamiento</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          <div>
+            <label className="block text-sm font-semibold text-gray-900 mb-2">Tipo</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <option value="fuerza">Fuerza</option>
+              <option value="cardio">Cardio</option>
+              <option value="hibrido">Híbrido</option>
+              <option value="yoga">Yoga</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-900 mb-2">Duración (minutos)</label>
+            <input
+              type="number"
+              value={duration}
+              onChange={(e) => setDuration(e.target.value)}
+              className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder="45"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-900 mb-3">Ejercicios</label>
+            {exercises.map((ex, idx) => (
+              <div key={idx} className="flex gap-2 mb-3">
+                <input
+                  type="text"
+                  placeholder="Nombre"
+                  value={ex.name}
+                  onChange={(e) => {
+                    const updated = [...exercises];
+                    updated[idx].name = e.target.value;
+                    setExercises(updated);
+                  }}
+                  className="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                />
+                <input
+                  type="number"
+                  placeholder="Series"
+                  value={ex.sets}
+                  onChange={(e) => {
+                    const updated = [...exercises];
+                    updated[idx].sets = e.target.value;
+                    setExercises(updated);
+                  }}
+                  className="w-16 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                />
+                <input
+                  type="number"
+                  placeholder="Reps"
+                  value={ex.reps}
+                  onChange={(e) => {
+                    const updated = [...exercises];
+                    updated[idx].reps = e.target.value;
+                    setExercises(updated);
+                  }}
+                  className="w-16 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                />
+                {exercises.length > 1 && (
+                  <button
+                    onClick={() => setExercises(exercises.filter((_, i) => i !== idx))}
+                    className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              onClick={() => setExercises([...exercises, { name: '', sets: '3', reps: '10' }])}
+              className="text-sm text-emerald-600 font-semibold mt-2"
+            >
+              + Agregar ejercicio
+            </button>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            onAdd({
+              type,
+              duration: parseInt(duration),
+              exercises: exercises.filter(e => e.name.trim())
+            });
+            onClose();
+          }}
+          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors"
+        >
+          Guardar entrenamiento
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const FridgeModal = ({ onClose, onAnalyze, loading }) => {
+  const fileInputRef = useRef(null);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Analizar nevera</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="bg-blue-50 border-2 border-dashed border-blue-300 rounded-3xl p-8 text-center mb-6">
+          <Camera size={40} className="mx-auto text-blue-500 mb-3" />
+          <p className="text-sm font-semibold text-gray-900 mb-2">Saca una foto de tu nevera</p>
+          <p className="text-xs text-gray-600 mb-4">Claude analizará qué tienes y sugerirá recetas</p>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+            className="w-full py-3 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold transition-colors"
+          >
+            {loading ? 'Analizando...' : 'Subir foto'}
+          </button>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const base64 = reader.result.split(',')[1];
+                onAnalyze(base64, file.type || 'image/jpeg');
+              };
+              reader.readAsDataURL(file);
+            }
+          }}
+          className="hidden"
+          capture="environment"
+        />
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const ShareModal = ({ recipe, onClose }) => {
+  const shareText = `🍳 ${recipe.titulo}\n⏱️ ${recipe.tiempo_min}min | 🔥 ${recipe.macros.kcal}kcal\n\n${recipe.pasos.join('\n')}\n\n#NutritionCoach`;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Compartir receta</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-3 mb-6">
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(shareText);
+              alert('Copiado al portapapeles');
+            }}
+            className="w-full py-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-900 font-semibold flex items-center justify-center gap-2 transition-colors"
+          >
+            <Copy size={18} />
+            Copiar texto
+          </button>
+
+          <button
+            onClick={() => {
+              const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
+              window.open(whatsappUrl, '_blank');
+            }}
+            className="w-full py-3 rounded-xl bg-green-100 hover:bg-green-200 text-green-700 font-semibold flex items-center justify-center gap-2 transition-colors"
+          >
+            📱 WhatsApp
+          </button>
+        </div>
+
+        <div className="bg-gray-50 rounded-xl p-4 mb-6 max-h-48 overflow-y-auto text-sm text-gray-700">
+          <p className="whitespace-pre-wrap font-mono">{shareText}</p>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
 // STATE REDUCER
 // ============================================================================
 
@@ -769,7 +968,7 @@ const initialState = {
   pantry: [],
   recipes: [],
   history: [],
-  ticketsProcessed: [],
+  workouts: [],
   favorites: [],
   loading: false,
   error: null
@@ -823,6 +1022,24 @@ const appReducer = (state, action) => {
     }
     case 'SET_RECIPES':
       return { ...state, recipes: action.payload };
+    case 'ADD_WORKOUT': {
+      const workouts = [
+        {
+          timestamp: new Date().toISOString(),
+          ...action.payload
+        },
+        ...state.workouts
+      ];
+      StorageAPI.set('workouts:log', workouts);
+      return { ...state, workouts };
+    }
+    case 'DELETE_WORKOUT': {
+      const updated = state.workouts.filter(w => w.timestamp !== action.payload);
+      StorageAPI.set('workouts:log', updated);
+      return { ...state, workouts: updated };
+    }
+    case 'SET_WORKOUTS':
+      return { ...state, workouts: action.payload };
     case 'TOGGLE_FAVORITE': {
       const isFav = state.favorites.includes(action.payload);
       const updated = isFav
@@ -845,13 +1062,12 @@ const appReducer = (state, action) => {
 };
 
 // ============================================================================
-// SHOPPING LIST COMPONENT
+// SHOPPING LIST MODAL
 // ============================================================================
 
 const ShoppingListModal = ({ recipes, pantry, onClose, onBuy }) => {
   const getShoppingList = () => {
     const needed = {};
-
     recipes.forEach(recipe => {
       recipe.ingredientes_faltan?.forEach(item => {
         const key = item.name.toLowerCase();
@@ -861,7 +1077,6 @@ const ShoppingListModal = ({ recipes, pantry, onClose, onBuy }) => {
         needed[key].recipes.push(recipe.titulo);
       });
     });
-
     return Object.values(needed);
   };
 
@@ -872,10 +1087,7 @@ const ShoppingListModal = ({ recipes, pantry, onClose, onBuy }) => {
       <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[80vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-gray-900">Lista de compra</h2>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
-          >
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
             ✕
           </button>
         </div>
@@ -889,12 +1101,8 @@ const ShoppingListModal = ({ recipes, pantry, onClose, onBuy }) => {
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <p className="font-semibold text-gray-900">{item.name}</p>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {item.quantity} {item.unit}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-1">
-                      Para: {item.recipes.join(', ')}
-                    </p>
+                    <p className="text-sm text-gray-500 mt-1">{item.quantity} {item.unit}</p>
+                    <p className="text-xs text-gray-400 mt-1">Para: {item.recipes.join(', ')}</p>
                   </div>
                   <button
                     onClick={() => onBuy(item)}
@@ -919,6 +1127,100 @@ const ShoppingListModal = ({ recipes, pantry, onClose, onBuy }) => {
   );
 };
 
+const MealPrepModal = ({ recipes, onClose }) => {
+  const [weekPlan, setWeekPlan] = useState(StorageAPI.get('mealprep:plan', {}));
+  const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+  const handleSelectRecipe = (day, recipe) => {
+    const updated = { ...weekPlan, [day]: recipe };
+    setWeekPlan(updated);
+    StorageAPI.set('mealprep:plan', updated);
+  };
+
+  const getTotalMacros = () => {
+    return Object.values(weekPlan).reduce((acc, recipe) => {
+      if (!recipe?.macros) return acc;
+      return {
+        kcal: acc.kcal + recipe.macros.kcal,
+        protein: acc.protein + recipe.macros.proteina_g,
+        carbs: acc.carbs + recipe.macros.carbos_g,
+        fats: acc.fats + recipe.macros.grasas_g
+      };
+    }, { kcal: 0, protein: 0, carbs: 0, fats: 0 });
+  };
+
+  const macros = getTotalMacros();
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Planificador semanal</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          {days.map(day => (
+            <div key={day} className="border border-gray-200 rounded-xl p-4">
+              <p className="font-semibold text-gray-900 mb-3">{day}</p>
+              {weekPlan[day] ? (
+                <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
+                  <p className="font-medium text-emerald-700">{weekPlan[day].titulo}</p>
+                  <p className="text-xs text-emerald-600 mt-1">
+                    {weekPlan[day].macros.kcal}kcal • {weekPlan[day].macros.proteina_g}g prot
+                  </p>
+                  <button
+                    onClick={() => handleSelectRecipe(day, null)}
+                    className="text-xs text-emerald-600 underline mt-2 font-medium"
+                  >
+                    Cambiar
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {recipes.map((recipe, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleSelectRecipe(day, recipe)}
+                      className="w-full text-left bg-gray-50 hover:bg-gray-100 p-2 rounded-lg transition-colors text-sm"
+                    >
+                      <p className="font-medium text-gray-900">{recipe.titulo}</p>
+                      <p className="text-xs text-gray-500">{recipe.macros.kcal}kcal</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200 mb-6">
+          <p className="text-xs text-gray-500 font-semibold uppercase mb-3">Totales semanales</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-2xl font-bold text-gray-900">{Math.round(macros.kcal)}</p>
+              <p className="text-xs text-gray-600">kcal</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-orange-500">{Math.round(macros.protein)}</p>
+              <p className="text-xs text-gray-600">g proteína</p>
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ============================================================================
 // MAIN APP
 // ============================================================================
@@ -928,6 +1230,9 @@ export default function PantryApp() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showShoppingList, setShowShoppingList] = useState(false);
   const [showMealPrep, setShowMealPrep] = useState(false);
+  const [showAddWorkout, setShowAddWorkout] = useState(false);
+  const [showFridgeAnalysis, setShowFridgeAnalysis] = useState(false);
+  const [showShare, setShowShare] = useState(null);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [state, dispatch] = useReducer(appReducer, initialState);
   const [profile, setProfile] = useState(null);
@@ -940,6 +1245,7 @@ export default function PantryApp() {
     const savedPantry = StorageAPI.get('pantry:items', []);
     const savedHistory = StorageAPI.get('history:recipes', []);
     const savedFavorites = StorageAPI.get('favorites:recipes', []);
+    const savedWorkouts = StorageAPI.get('workouts:log', []);
 
     if (!savedProfile) {
       setShowOnboarding(true);
@@ -950,12 +1256,53 @@ export default function PantryApp() {
     dispatch({ type: 'SET_PANTRY', payload: savedPantry });
     dispatch({ type: 'SET_HISTORY', payload: savedHistory });
     dispatch({ type: 'SET_FAVORITES', payload: savedFavorites });
+    dispatch({ type: 'SET_WORKOUTS', payload: savedWorkouts });
   }, []);
 
   const handleProfileComplete = () => {
     const savedProfile = StorageAPI.get('profile:user');
     setProfile(savedProfile);
     setShowOnboarding(false);
+  };
+
+  const handleFridgeAnalyze = async (base64, mediaType) => {
+    dispatch({ type: 'SET_LOADING', payload: true });
+
+    try {
+      const prompt = `Analiza esta foto de una nevera y enumera todos los ingredientes que ves.
+Responde ÚNICAMENTE en JSON válido, sin markdown:
+{
+  "items": [
+    { "name": "nombre", "quantity": 1, "unit": "unidad", "category": "proteina|carbohidrato|verdura|fruta|lacteo|grasa|otro" }
+  ]
+}`;
+
+      const response = await callClaude([{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mediaType,
+              data: base64
+            }
+          },
+          {
+            type: 'text',
+            text: prompt
+          }
+        ]
+      }]);
+
+      const parsed = parseClaudeJson(response);
+      dispatch({ type: 'ADD_PANTRY_ITEMS', payload: parsed.items });
+      dispatch({ type: 'SET_LOADING', payload: false });
+      setShowFridgeAnalysis(false);
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: error.message });
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
   };
 
   // =========================================================================
@@ -975,7 +1322,7 @@ export default function PantryApp() {
         const mediaType = file.type || 'image/jpeg';
 
         const prompt = `Analiza este ticket de compra y extrae SOLO los ingredientes alimentarios.
-Responde ÚNICAMENTE en JSON válido, sin markdown, sin texto extra. Formato exacto:
+Responde ÚNICAMENTE en JSON válido, sin markdown:
 {
   "items": [
     { "name": "nombre del ingrediente", "quantity": número, "unit": "kg/l/unidad", "category": "proteina|carbohidrato|verdura|fruta|lacteo|grasa|otro" }
@@ -1065,7 +1412,7 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
       "ingredientes_usados": [{ "name": "...", "quantity": 0, "unit": "..." }],
       "ingredientes_faltan": [{ "name": "...", "quantity": 0, "unit": "..." }],
       "pasos": ["paso 1", "paso 2", ...],
-      "encaje_objetivo": "frase corta de por qué encaja"
+      "encaje_objetivo": "frase corta"
     }
   ]
 }`;
@@ -1090,13 +1437,19 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
   }
 
   const { totals, count } = calculateMacrosFromRecipes(state.history);
+  const monthlyTrends = getMonthlTrends(state.history);
+  const thisMonthWorkouts = state.workouts.filter(w => {
+    const date = new Date(w.timestamp);
+    const now = new Date();
+    return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+  });
 
   // =========================================================================
   // HOME TAB
   // =========================================================================
 
   const HomeTab = () => (
-    <div className="pb-24 px-4 pt-6">
+    <div className="pb-32 px-4 pt-6">
       <div className="max-w-2xl mx-auto">
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900">Hola 👋</h1>
@@ -1129,11 +1482,11 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
             <p className="text-emerald-100 text-xs mt-1">ingredientes</p>
           </div>
 
-          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-3xl p-5 text-white shadow-lg">
-            <TrendingUp size={32} className="opacity-20 mb-3" />
-            <p className="text-orange-100 text-xs font-medium">Esta semana</p>
-            <p className="text-3xl font-bold mt-1">{count}</p>
-            <p className="text-orange-100 text-xs mt-1">recetas</p>
+          <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-3xl p-5 text-white shadow-lg">
+            <Dumbbell size={32} className="opacity-20 mb-3" />
+            <p className="text-purple-100 text-xs font-medium">Este mes</p>
+            <p className="text-3xl font-bold mt-1">{thisMonthWorkouts.length}</p>
+            <p className="text-purple-100 text-xs mt-1">entrenamientos</p>
           </div>
         </div>
 
@@ -1161,6 +1514,14 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
         >
           <Camera size={20} />
           {state.loading ? 'Leyendo ticket...' : 'Subir ticket de compra'}
+        </button>
+
+        <button
+          onClick={() => setShowFridgeAnalysis(true)}
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 rounded-2xl flex items-center justify-center gap-2 transition-colors shadow-md mb-3"
+        >
+          <RefreshCw size={20} />
+          Analizar nevera
         </button>
 
         <button
@@ -1198,12 +1559,20 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
                 <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-100">
                   <div className="flex items-start justify-between mb-2">
                     <p className="font-semibold text-gray-900">{recipe.titulo}</p>
-                    <button
-                      onClick={() => dispatch({ type: 'TOGGLE_FAVORITE', payload: recipe.titulo })}
-                      className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
-                    >
-                      <Heart size={16} className={state.favorites.includes(recipe.titulo) ? 'fill-red-500 text-red-500' : 'text-gray-400'} />
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => dispatch({ type: 'TOGGLE_FAVORITE', payload: recipe.titulo })}
+                        className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+                      >
+                        <Heart size={16} className={state.favorites.includes(recipe.titulo) ? 'fill-red-500 text-red-500' : 'text-gray-400'} />
+                      </button>
+                      <button
+                        onClick={() => setShowShare(recipe)}
+                        className="p-1 hover:bg-gray-100 rounded-lg transition-colors text-gray-400 hover:text-gray-600"
+                      >
+                        <Share2 size={16} />
+                      </button>
+                    </div>
                   </div>
                   <p className="text-xs text-gray-500">{recipe.encaje_objetivo}</p>
                   <div className="flex gap-2 text-xs text-gray-600 mt-2 mb-3">
@@ -1245,7 +1614,7 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
   // =========================================================================
 
   const PantryTab = () => (
-    <div className="pb-24 px-4 pt-6">
+    <div className="pb-32 px-4 pt-6">
       <div className="max-w-2xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-gray-900">Mi Despensa</h2>
@@ -1297,7 +1666,7 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
       : state.recipes;
 
     return (
-      <div className="pb-24 px-4 pt-6">
+      <div className="pb-32 px-4 pt-6">
         <div className="max-w-2xl mx-auto">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-2xl font-bold text-gray-900">Recetas</h2>
@@ -1349,13 +1718,20 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
           ) : (
             <div className="space-y-4">
               {displayRecipes.map((recipe, idx) => (
-                <RecipeCard
-                  key={idx}
-                  recipe={recipe}
-                  onCook={handleCookRecipe}
-                  isFavorite={state.favorites.includes(recipe.titulo)}
-                  onToggleFavorite={(title) => dispatch({ type: 'TOGGLE_FAVORITE', payload: title })}
-                />
+                <div key={idx} className="relative">
+                  <RecipeCard
+                    recipe={recipe}
+                    onCook={handleCookRecipe}
+                    isFavorite={state.favorites.includes(recipe.titulo)}
+                    onToggleFavorite={(title) => dispatch({ type: 'TOGGLE_FAVORITE', payload: title })}
+                  />
+                  <button
+                    onClick={() => setShowShare(recipe)}
+                    className="absolute top-6 right-6 p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600"
+                  >
+                    <Share2 size={18} />
+                  </button>
+                </div>
               ))}
               <button
                 onClick={generateRecipes}
@@ -1371,11 +1747,87 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
   };
 
   // =========================================================================
+  // WORKOUTS TAB
+  // =========================================================================
+
+  const WorkoutsTab = () => (
+    <div className="pb-32 px-4 pt-6">
+      <div className="max-w-2xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Entrenamientos</h2>
+          <button
+            onClick={() => setShowAddWorkout(true)}
+            className="p-2 rounded-lg bg-purple-100 text-purple-600 hover:bg-purple-200 transition-colors"
+          >
+            <Plus size={20} />
+          </button>
+        </div>
+
+        {state.workouts.length === 0 ? (
+          <EmptyState
+            icon={Dumbbell}
+            title="Sin entrenamientos aún"
+            description="Registra tus sesiones de ejercicio para trackear tu progreso"
+            action={
+              <button
+                onClick={() => setShowAddWorkout(true)}
+                className="px-6 py-2 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 transition-colors"
+              >
+                Agregar entrenamiento
+              </button>
+            }
+          />
+        ) : (
+          <div className="space-y-3">
+            {state.workouts.slice(0, 10).map((workout) => (
+              <WorkoutCard
+                key={workout.timestamp}
+                workout={workout}
+                onDelete={(timestamp) => dispatch({ type: 'DELETE_WORKOUT', payload: timestamp })}
+              />
+            ))}
+            {state.workouts.length > 10 && (
+              <p className="text-xs text-gray-500 text-center py-4">
+                +{state.workouts.length - 10} más entrenamientos
+              </p>
+            )}
+          </div>
+        )}
+
+        {thisMonthWorkouts.length > 0 && (
+          <div className="bg-white rounded-3xl p-5 border border-gray-100 mt-6">
+            <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <TrendingUp size={18} />
+              Resumen del mes
+            </h3>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center pb-3 border-b border-gray-100">
+                <span className="text-gray-600">Entrenamientos</span>
+                <span className="font-semibold text-gray-900">{thisMonthWorkouts.length}</span>
+              </div>
+              <div className="flex justify-between items-center pb-3 border-b border-gray-100">
+                <span className="text-gray-600">Tiempo total</span>
+                <span className="font-semibold text-gray-900">{thisMonthWorkouts.reduce((acc, w) => acc + w.duration, 0)} min</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Ejercicios únicos</span>
+                <span className="font-semibold text-gray-900">
+                  {new Set(thisMonthWorkouts.flatMap(w => w.exercises.map(e => e.name))).size}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // =========================================================================
   // PROFILE TAB
   // =========================================================================
 
   const ProfileTab = () => (
-    <div className="pb-24 px-4 pt-6">
+    <div className="pb-32 px-4 pt-6">
       <div className="max-w-2xl mx-auto">
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Mi Perfil</h2>
 
@@ -1419,6 +1871,29 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
               </div>
             )}
 
+            {monthlyTrends.length > 0 && (
+              <div className="bg-white rounded-2xl p-4 border border-gray-100">
+                <p className="text-xs text-gray-500 font-semibold uppercase mb-3 flex items-center gap-2">
+                  <LineChart size={16} />
+                  Tendencias mensuales
+                </p>
+                <div className="space-y-3">
+                  {monthlyTrends.map((month, idx) => (
+                    <div key={idx} className="flex items-center gap-3 pb-3 border-b border-gray-100 last:border-0">
+                      <div className="flex-1">
+                        <p className="font-medium text-gray-900 text-sm">{month.month}</p>
+                        <p className="text-xs text-gray-500">{month.daysCooked} días cocinando</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold text-gray-900">{month.kcal}</p>
+                        <p className="text-xs text-gray-500">kcal/día</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {state.history.length > 0 && (
               <div className="bg-white rounded-2xl p-4 border border-gray-100">
                 <p className="text-xs text-gray-500 font-semibold uppercase mb-3">Historial (últimas recetas)</p>
@@ -1438,20 +1913,32 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
               </div>
             )}
 
-            <button
-              onClick={() => {
-                StorageAPI.clear('profile:user');
-                StorageAPI.clear('pantry:items');
-                StorageAPI.clear('history:recipes');
-                StorageAPI.clear('favorites:recipes');
-                StorageAPI.clear('water:log');
-                StorageAPI.clear('mealprep:plan');
-                setShowOnboarding(true);
-              }}
-              className="w-full mt-6 py-3 rounded-xl border border-red-200 text-red-600 font-semibold hover:bg-red-50 transition-colors"
-            >
-              Resetear todo
-            </button>
+            <div className="space-y-2 pt-4">
+              <button
+                onClick={() => {
+                  exportToCSV(profile, state.pantry, state.history, state.workouts);
+                }}
+                className="w-full py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+              >
+                <Download size={18} />
+                Descargar datos (CSV)
+              </button>
+              <button
+                onClick={() => {
+                  StorageAPI.clear('profile:user');
+                  StorageAPI.clear('pantry:items');
+                  StorageAPI.clear('history:recipes');
+                  StorageAPI.clear('favorites:recipes');
+                  StorageAPI.clear('water:log');
+                  StorageAPI.clear('mealprep:plan');
+                  StorageAPI.clear('workouts:log');
+                  setShowOnboarding(true);
+                }}
+                className="w-full py-3 rounded-xl border border-red-200 text-red-600 font-semibold hover:bg-red-50 transition-colors"
+              >
+                Resetear todo
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1467,6 +1954,7 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
       {tab === 'home' && <HomeTab />}
       {tab === 'pantry' && <PantryTab />}
       {tab === 'recipes' && <RecipesTab />}
+      {tab === 'workouts' && <WorkoutsTab />}
       {tab === 'profile' && <ProfileTab />}
 
       {showShoppingList && (
@@ -1486,8 +1974,29 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
       {showMealPrep && (
         <MealPrepModal
           recipes={state.recipes}
-          onSelect={() => {}}
           onClose={() => setShowMealPrep(false)}
+        />
+      )}
+
+      {showAddWorkout && (
+        <AddWorkoutModal
+          onAdd={(workout) => dispatch({ type: 'ADD_WORKOUT', payload: workout })}
+          onClose={() => setShowAddWorkout(false)}
+        />
+      )}
+
+      {showFridgeAnalysis && (
+        <FridgeModal
+          onClose={() => setShowFridgeAnalysis(false)}
+          onAnalyze={handleFridgeAnalyze}
+          loading={state.loading}
+        />
+      )}
+
+      {showShare && (
+        <ShareModal
+          recipe={showShare}
+          onClose={() => setShowShare(null)}
         />
       )}
 
