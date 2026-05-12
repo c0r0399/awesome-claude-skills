@@ -2,7 +2,8 @@ import React, { useReducer, useState, useEffect, useRef } from 'react';
 import {
   Home, ShoppingBag, ChefHat, User, Upload, Plus, Trash2,
   Check, ChevronRight, ChevronDown, Clock, Flame, AlertCircle,
-  Camera, Send, TrendingUp, Calendar, ShoppingCart, BarChart3, Zap
+  Camera, Send, TrendingUp, Calendar, ShoppingCart, BarChart3, Zap,
+  Heart, Droplets, Grid3x3, Copy, X
 } from 'lucide-react';
 
 // ============================================================================
@@ -103,6 +104,35 @@ const calculateMacrosFromRecipes = (history) => {
   return { totals, count: thisWeek.length };
 };
 
+const getTodayWater = () => {
+  const today = new Date().toISOString().split('T')[0];
+  const waterLog = StorageAPI.get('water:log', {});
+  return waterLog[today] || 0;
+};
+
+const saveTodayWater = (amount) => {
+  const today = new Date().toISOString().split('T')[0];
+  const waterLog = StorageAPI.get('water:log', {});
+  waterLog[today] = amount;
+  StorageAPI.set('water:log', waterLog);
+};
+
+const getWeekWater = () => {
+  const waterLog = StorageAPI.get('water:log', {});
+  const weekData = [];
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dateStr = date.toISOString().split('T')[0];
+    weekData.push({
+      date: dateStr,
+      day: date.toLocaleDateString('es-ES', { weekday: 'short' }).slice(0, 3),
+      amount: waterLog[dateStr] || 0
+    });
+  }
+  return weekData;
+};
+
 // ============================================================================
 // REUSABLE COMPONENTS
 // ============================================================================
@@ -188,7 +218,7 @@ const TabBar = ({ current, onChange }) => {
   );
 };
 
-const PantryCard = ({ item, onUpdate, onDelete }) => (
+const PantryCard = ({ item, onDelete }) => (
   <div className="bg-white rounded-2xl p-4 border border-gray-100 flex items-start justify-between hover:shadow-md transition-shadow">
     <div className="flex-1">
       <p className="font-semibold text-gray-900">{item.name}</p>
@@ -214,7 +244,7 @@ const PantryCard = ({ item, onUpdate, onDelete }) => (
   </div>
 );
 
-const RecipeCard = ({ recipe, onCook, userPantry }) => {
+const RecipeCard = ({ recipe, onCook, userPantry, isFavorite, onToggleFavorite }) => {
   const hasMissingItems = recipe.ingredientes_faltan?.length > 0;
 
   return (
@@ -224,6 +254,15 @@ const RecipeCard = ({ recipe, onCook, userPantry }) => {
           <h3 className="font-semibold text-gray-900 text-lg">{recipe.titulo}</h3>
           <p className="text-xs text-gray-500 mt-1">{recipe.encaje_objetivo}</p>
         </div>
+        <button
+          onClick={() => onToggleFavorite?.(recipe.titulo)}
+          className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+        >
+          <Heart size={18} className={isFavorite ? 'fill-red-500 text-red-500' : 'text-gray-400'} />
+        </button>
+      </div>
+
+      <div className="flex items-start justify-between mb-3">
         <span className={`text-xs font-semibold px-3 py-1 rounded-full whitespace-nowrap ${
           recipe.dificultad === 'fácil'
             ? 'bg-emerald-100 text-emerald-700'
@@ -294,6 +333,136 @@ const MacroBar = ({ value, max, color, label }) => (
     </div>
   </div>
 );
+
+const WaterTracker = ({ today, onAdd, onRemove }) => (
+  <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-3xl p-5 text-white shadow-lg mb-6">
+    <div className="flex items-start justify-between mb-4">
+      <div>
+        <p className="text-blue-100 text-xs font-medium">Hidratación hoy</p>
+        <p className="text-4xl font-bold mt-2">{today}</p>
+        <p className="text-blue-100 text-xs mt-1">de 8 vasos</p>
+      </div>
+      <Droplets size={40} className="opacity-20" />
+    </div>
+
+    <div className="flex gap-2">
+      <button
+        onClick={() => onAdd()}
+        className="flex-1 bg-white/20 hover:bg-white/30 text-white font-semibold py-2 rounded-lg transition-colors text-sm"
+      >
+        + Vaso
+      </button>
+      <button
+        onClick={() => onRemove()}
+        disabled={today === 0}
+        className="flex-1 bg-white/20 hover:bg-white/30 disabled:opacity-50 text-white font-semibold py-2 rounded-lg transition-colors text-sm"
+      >
+        - Vaso
+      </button>
+    </div>
+
+    <div className="mt-3 w-full bg-white/20 rounded-full h-3 overflow-hidden">
+      <div
+        className="h-full bg-white rounded-full transition-all"
+        style={{ width: `${Math.min((today / 8) * 100, 100)}%` }}
+      />
+    </div>
+  </div>
+);
+
+const MealPrepModal = ({ recipes, onSelect, onClose }) => {
+  const [weekPlan, setWeekPlan] = useState(StorageAPI.get('mealprep:plan', {}));
+  const days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+  const handleSelectRecipe = (day, recipe) => {
+    const updated = { ...weekPlan, [day]: recipe };
+    setWeekPlan(updated);
+    StorageAPI.set('mealprep:plan', updated);
+  };
+
+  const getTotalMacros = () => {
+    return Object.values(weekPlan).reduce((acc, recipe) => {
+      if (!recipe?.macros) return acc;
+      return {
+        kcal: acc.kcal + recipe.macros.kcal,
+        protein: acc.protein + recipe.macros.proteina_g,
+        carbs: acc.carbs + recipe.macros.carbos_g,
+        fats: acc.fats + recipe.macros.grasas_g
+      };
+    }, { kcal: 0, protein: 0, carbs: 0, fats: 0 });
+  };
+
+  const macros = getTotalMacros();
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+      <div className="bg-white w-full sm:max-w-2xl rounded-t-3xl sm:rounded-3xl p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Planificador semanal</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-4 mb-6">
+          {days.map(day => (
+            <div key={day} className="border border-gray-200 rounded-xl p-4">
+              <p className="font-semibold text-gray-900 mb-3">{day}</p>
+              {weekPlan[day] ? (
+                <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
+                  <p className="font-medium text-emerald-700">{weekPlan[day].titulo}</p>
+                  <p className="text-xs text-emerald-600 mt-1">
+                    {weekPlan[day].macros.kcal}kcal • {weekPlan[day].macros.proteina_g}g prot
+                  </p>
+                  <button
+                    onClick={() => handleSelectRecipe(day, null)}
+                    className="text-xs text-emerald-600 underline mt-2 font-medium"
+                  >
+                    Cambiar
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-32 overflow-y-auto">
+                  {recipes.map((recipe, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleSelectRecipe(day, recipe)}
+                      className="w-full text-left bg-gray-50 hover:bg-gray-100 p-2 rounded-lg transition-colors text-sm"
+                    >
+                      <p className="font-medium text-gray-900">{recipe.titulo}</p>
+                      <p className="text-xs text-gray-500">{recipe.macros.kcal}kcal</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200 mb-6">
+          <p className="text-xs text-gray-500 font-semibold uppercase mb-3">Totales semanales</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-2xl font-bold text-gray-900">{Math.round(macros.kcal)}</p>
+              <p className="text-xs text-gray-600">kcal</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-orange-500">{Math.round(macros.protein)}</p>
+              <p className="text-xs text-gray-600">g proteína</p>
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors"
+        >
+          Cerrar
+        </button>
+      </div>
+    </div>
+  );
+};
 
 // ============================================================================
 // ONBOARDING COMPONENT
@@ -601,6 +770,7 @@ const initialState = {
   recipes: [],
   history: [],
   ticketsProcessed: [],
+  favorites: [],
   loading: false,
   error: null
 };
@@ -653,6 +823,16 @@ const appReducer = (state, action) => {
     }
     case 'SET_RECIPES':
       return { ...state, recipes: action.payload };
+    case 'TOGGLE_FAVORITE': {
+      const isFav = state.favorites.includes(action.payload);
+      const updated = isFav
+        ? state.favorites.filter(f => f !== action.payload)
+        : [...state.favorites, action.payload];
+      StorageAPI.set('favorites:recipes', updated);
+      return { ...state, favorites: updated };
+    }
+    case 'SET_FAVORITES':
+      return { ...state, favorites: action.payload };
     case 'SET_LOADING':
       return { ...state, loading: action.payload, error: null };
     case 'SET_ERROR':
@@ -747,8 +927,11 @@ export default function PantryApp() {
   const [tab, setTab] = useState('home');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showShoppingList, setShowShoppingList] = useState(false);
+  const [showMealPrep, setShowMealPrep] = useState(false);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [state, dispatch] = useReducer(appReducer, initialState);
   const [profile, setProfile] = useState(null);
+  const [waterToday, setWaterToday] = useState(getTodayWater());
   const fileInputRef = useRef(null);
 
   // Load from storage
@@ -756,6 +939,7 @@ export default function PantryApp() {
     const savedProfile = StorageAPI.get('profile:user');
     const savedPantry = StorageAPI.get('pantry:items', []);
     const savedHistory = StorageAPI.get('history:recipes', []);
+    const savedFavorites = StorageAPI.get('favorites:recipes', []);
 
     if (!savedProfile) {
       setShowOnboarding(true);
@@ -765,6 +949,7 @@ export default function PantryApp() {
 
     dispatch({ type: 'SET_PANTRY', payload: savedPantry });
     dispatch({ type: 'SET_HISTORY', payload: savedHistory });
+    dispatch({ type: 'SET_FAVORITES', payload: savedFavorites });
   }, []);
 
   const handleProfileComplete = () => {
@@ -920,6 +1105,22 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
           </p>
         </div>
 
+        <WaterTracker
+          today={waterToday}
+          onAdd={() => {
+            const newAmount = waterToday + 1;
+            setWaterToday(newAmount);
+            saveTodayWater(newAmount);
+          }}
+          onRemove={() => {
+            if (waterToday > 0) {
+              const newAmount = waterToday - 1;
+              setWaterToday(newAmount);
+              saveTodayWater(newAmount);
+            }
+          }}
+        />
+
         <div className="grid grid-cols-2 gap-4 mb-6">
           <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-3xl p-5 text-white shadow-lg">
             <ShoppingBag size={32} className="opacity-20 mb-3" />
@@ -965,10 +1166,19 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
         <button
           onClick={generateRecipes}
           disabled={state.loading || state.pantry.length === 0}
-          className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-semibold py-4 rounded-2xl flex items-center justify-center gap-2 transition-colors shadow-md mb-6"
+          className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-semibold py-4 rounded-2xl flex items-center justify-center gap-2 transition-colors shadow-md mb-3"
         >
           <ChefHat size={20} />
           {state.loading ? 'Buscando recetas...' : '¿Qué cocino hoy?'}
+        </button>
+
+        <button
+          onClick={() => setShowMealPrep(true)}
+          disabled={state.recipes.length === 0}
+          className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-semibold py-4 rounded-2xl flex items-center justify-center gap-2 transition-colors shadow-md mb-6"
+        >
+          <Grid3x3 size={20} />
+          Planificador semanal
         </button>
 
         {state.recipes.length > 0 && (
@@ -986,8 +1196,16 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
             <div className="space-y-3">
               {state.recipes.slice(0, 2).map((recipe, idx) => (
                 <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-100">
-                  <p className="font-semibold text-gray-900">{recipe.titulo}</p>
-                  <p className="text-xs text-gray-500 mt-1">{recipe.encaje_objetivo}</p>
+                  <div className="flex items-start justify-between mb-2">
+                    <p className="font-semibold text-gray-900">{recipe.titulo}</p>
+                    <button
+                      onClick={() => dispatch({ type: 'TOGGLE_FAVORITE', payload: recipe.titulo })}
+                      className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+                    >
+                      <Heart size={16} className={state.favorites.includes(recipe.titulo) ? 'fill-red-500 text-red-500' : 'text-gray-400'} />
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500">{recipe.encaje_objetivo}</p>
                   <div className="flex gap-2 text-xs text-gray-600 mt-2 mb-3">
                     <span>⏱ {recipe.tiempo_min}m</span>
                     <span>🔥 {recipe.macros.kcal}kcal</span>
@@ -1073,48 +1291,84 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
   // RECIPES TAB
   // =========================================================================
 
-  const RecipesTab = () => (
-    <div className="pb-24 px-4 pt-6">
-      <div className="max-w-2xl mx-auto">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">Recetas</h2>
+  const RecipesTab = () => {
+    const displayRecipes = showFavoritesOnly
+      ? state.recipes.filter(r => state.favorites.includes(r.titulo))
+      : state.recipes;
 
-        {state.loading ? (
-          <LoadingPulse label="Buscando recetas que encajen contigo…" />
-        ) : state.recipes.length === 0 ? (
-          <EmptyState
-            icon={ChefHat}
-            title="Sin recetas aún"
-            description="Genera recetas personalizadas basadas en tu despensa y objetivos"
-            action={
+    return (
+      <div className="pb-24 px-4 pt-6">
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-gray-900">Recetas</h2>
+            {state.recipes.length > 0 && (
+              <button
+                onClick={() => setShowFavoritesOnly(!showFavoritesOnly)}
+                className={`p-2 rounded-lg transition-colors ${
+                  showFavoritesOnly
+                    ? 'bg-red-100 text-red-600'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                <Heart size={20} className={showFavoritesOnly ? 'fill-current' : ''} />
+              </button>
+            )}
+          </div>
+
+          {state.loading ? (
+            <LoadingPulse label="Buscando recetas que encajen contigo…" />
+          ) : state.recipes.length === 0 ? (
+            <EmptyState
+              icon={ChefHat}
+              title="Sin recetas aún"
+              description="Genera recetas personalizadas basadas en tu despensa y objetivos"
+              action={
+                <button
+                  onClick={generateRecipes}
+                  disabled={state.pantry.length === 0}
+                  className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  Generar recetas
+                </button>
+              }
+            />
+          ) : displayRecipes.length === 0 ? (
+            <EmptyState
+              icon={Heart}
+              title="Sin favoritas aún"
+              description="Marca las recetas que te gusten con el corazón"
+              action={
+                <button
+                  onClick={() => setShowFavoritesOnly(false)}
+                  className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 transition-colors"
+                >
+                  Ver todas
+                </button>
+              }
+            />
+          ) : (
+            <div className="space-y-4">
+              {displayRecipes.map((recipe, idx) => (
+                <RecipeCard
+                  key={idx}
+                  recipe={recipe}
+                  onCook={handleCookRecipe}
+                  isFavorite={state.favorites.includes(recipe.titulo)}
+                  onToggleFavorite={(title) => dispatch({ type: 'TOGGLE_FAVORITE', payload: title })}
+                />
+              ))}
               <button
                 onClick={generateRecipes}
-                disabled={state.pantry.length === 0}
-                className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                className="w-full py-3 rounded-xl border-2 border-emerald-600 text-emerald-600 font-semibold hover:bg-emerald-50 transition-colors mt-6"
               >
-                Generar recetas
+                Generar nuevas recetas
               </button>
-            }
-          />
-        ) : (
-          <div className="space-y-4">
-            {state.recipes.map((recipe, idx) => (
-              <RecipeCard
-                key={idx}
-                recipe={recipe}
-                onCook={handleCookRecipe}
-              />
-            ))}
-            <button
-              onClick={generateRecipes}
-              className="w-full py-3 rounded-xl border-2 border-emerald-600 text-emerald-600 font-semibold hover:bg-emerald-50 transition-colors mt-6"
-            >
-              Generar nuevas recetas
-            </button>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // =========================================================================
   // PROFILE TAB
@@ -1189,6 +1443,9 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
                 StorageAPI.clear('profile:user');
                 StorageAPI.clear('pantry:items');
                 StorageAPI.clear('history:recipes');
+                StorageAPI.clear('favorites:recipes');
+                StorageAPI.clear('water:log');
+                StorageAPI.clear('mealprep:plan');
                 setShowOnboarding(true);
               }}
               className="w-full mt-6 py-3 rounded-xl border border-red-200 text-red-600 font-semibold hover:bg-red-50 transition-colors"
@@ -1223,6 +1480,14 @@ Responde ÚNICAMENTE en JSON válido, sin markdown:
               payload: [item]
             });
           }}
+        />
+      )}
+
+      {showMealPrep && (
+        <MealPrepModal
+          recipes={state.recipes}
+          onSelect={() => {}}
+          onClose={() => setShowMealPrep(false)}
         />
       )}
 
