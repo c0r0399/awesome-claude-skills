@@ -1,0 +1,1044 @@
+import React, { useReducer, useState, useEffect, useRef } from 'react';
+import {
+  Home, ShoppingBag, ChefHat, User, Upload, Plus, Trash2,
+  Check, ChevronRight, ChevronDown, Clock, Flame, AlertCircle,
+  Camera, Send
+} from 'lucide-react';
+
+// ============================================================================
+// STORAGE HELPERS
+// ============================================================================
+
+const StorageAPI = {
+  get: (key, fallback = null) => {
+    try {
+      const data = window.storage?.getItem(key);
+      return data ? JSON.parse(data) : fallback;
+    } catch {
+      return fallback;
+    }
+  },
+  set: (key, value) => {
+    try {
+      window.storage?.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      console.error('Storage error:', e);
+    }
+  },
+  clear: (key) => {
+    try {
+      window.storage?.removeItem(key);
+    } catch (e) {
+      console.error('Storage error:', e);
+    }
+  }
+};
+
+// ============================================================================
+// CLAUDE API HELPERS
+// ============================================================================
+
+async function callClaude(messages) {
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        messages
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'API Error');
+    }
+
+    const data = await response.json();
+    const text = data.content
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('\n');
+
+    return text;
+  } catch (error) {
+    throw new Error(`Claude API Error: ${error.message}`);
+  }
+}
+
+function parseClaudeJson(text) {
+  try {
+    const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/({[\s\S]*})/);
+    if (!jsonMatch) throw new Error('No JSON found');
+    const jsonStr = jsonMatch[1] || jsonMatch[0];
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    console.error('JSON parse error:', e);
+    throw new Error('Invalid response format');
+  }
+}
+
+// ============================================================================
+// REUSABLE COMPONENTS
+// ============================================================================
+
+const EmptyState = ({ icon: Icon, title, description, action }) => (
+  <div className="flex flex-col items-center justify-center py-12 px-4">
+    <div className="mb-4 p-3 rounded-full bg-amber-50">
+      <Icon className="w-8 h-8 text-amber-600" />
+    </div>
+    <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
+    <p className="text-sm text-gray-500 text-center mb-6 max-w-xs">{description}</p>
+    {action}
+  </div>
+);
+
+const LoadingPulse = ({ label }) => (
+  <div className="flex flex-col items-center justify-center py-12 px-4">
+    <div className="relative w-12 h-12 mb-4">
+      <div className="absolute inset-0 rounded-full bg-green-500 opacity-20 animate-pulse"></div>
+      <div className="absolute inset-2 rounded-full bg-green-500 opacity-10 animate-pulse" style={{ animationDelay: '0.2s' }}></div>
+    </div>
+    <p className="text-sm text-gray-600 font-medium">{label}</p>
+  </div>
+);
+
+const Stepper = ({ steps, currentStep }) => (
+  <div className="mb-6">
+    <div className="flex items-center justify-between mb-3">
+      {steps.map((step, idx) => (
+        <React.Fragment key={idx}>
+          <div
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold transition-colors ${
+              idx < currentStep
+                ? 'bg-green-600 text-white'
+                : idx === currentStep
+                ? 'bg-green-500 text-white'
+                : 'bg-gray-200 text-gray-600'
+            }`}
+          >
+            {idx < currentStep ? <Check size={16} /> : idx + 1}
+          </div>
+          {idx < steps.length - 1 && (
+            <div
+              className={`flex-1 h-1 mx-2 rounded-full transition-colors ${
+                idx < currentStep ? 'bg-green-600' : 'bg-gray-200'
+              }`}
+            />
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+    <p className="text-xs text-gray-500 font-medium">{steps[currentStep]}</p>
+  </div>
+);
+
+const TabBar = ({ current, onChange }) => {
+  const tabs = [
+    { id: 'home', label: 'Inicio', icon: Home },
+    { id: 'pantry', label: 'Despensa', icon: ShoppingBag },
+    { id: 'recipes', label: 'Recetas', icon: ChefHat },
+    { id: 'profile', label: 'Perfil', icon: User }
+  ];
+
+  return (
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-2 py-2 z-40">
+      <div className="flex justify-around max-w-2xl mx-auto">
+        {tabs.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => onChange(id)}
+            className={`flex flex-col items-center py-2 px-3 rounded-lg transition-colors ${
+              current === id
+                ? 'text-green-600 bg-green-50'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Icon size={24} />
+            <span className="text-xs font-medium mt-1">{label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const PantryCard = ({ item, onUpdate, onDelete }) => (
+  <div className="bg-white rounded-2xl p-4 border border-gray-100 flex items-start justify-between hover:shadow-md transition-shadow">
+    <div className="flex-1">
+      <p className="font-semibold text-gray-900">{item.name}</p>
+      <p className="text-sm text-gray-500">{item.quantity} {item.unit}</p>
+      <span className="inline-block mt-2 text-xs bg-amber-50 text-amber-700 px-2 py-1 rounded-full">
+        {item.category}
+      </span>
+    </div>
+    <button
+      onClick={() => onDelete(item.name)}
+      className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+    >
+      <Trash2 size={18} />
+    </button>
+  </div>
+);
+
+const RecipeCard = ({ recipe, onCook, userPantry }) => {
+  const hasMissingItems = recipe.ingredientes_faltan?.length > 0;
+
+  return (
+    <div className="bg-white rounded-3xl p-5 border border-gray-100 hover:shadow-lg transition-shadow">
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex-1">
+          <h3 className="font-semibold text-gray-900 text-lg">{recipe.titulo}</h3>
+          <p className="text-xs text-gray-500 mt-1">{recipe.encaje_objetivo}</p>
+        </div>
+        <span className={`text-xs font-semibold px-3 py-1 rounded-full whitespace-nowrap ${
+          recipe.dificultad === 'fácil'
+            ? 'bg-green-100 text-green-700'
+            : recipe.dificultad === 'media'
+            ? 'bg-amber-100 text-amber-700'
+            : 'bg-red-100 text-red-700'
+        }`}>
+          {recipe.dificultad}
+        </span>
+      </div>
+
+      <div className="flex gap-4 text-sm text-gray-600 mb-4">
+        <div className="flex items-center gap-1">
+          <Clock size={16} />
+          {recipe.tiempo_min} min
+        </div>
+        <div className="flex items-center gap-1">
+          <Flame size={16} />
+          {recipe.macros.kcal} kcal
+        </div>
+      </div>
+
+      <div className="bg-gray-50 rounded-2xl p-3 mb-4 text-xs text-gray-700 space-y-2 max-h-48 overflow-y-auto">
+        {recipe.pasos.map((paso, idx) => (
+          <div key={idx} className="flex gap-2">
+            <span className="font-semibold text-gray-900 flex-shrink-0">{idx + 1}.</span>
+            <span>{paso}</span>
+          </div>
+        ))}
+      </div>
+
+      {hasMissingItems && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-700">
+          <p className="font-semibold mb-2">Te falta:</p>
+          <ul className="space-y-1">
+            {recipe.ingredientes_faltan.map((ing, idx) => (
+              <li key={idx}>• {ing.name} ({ing.quantity} {ing.unit})</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <button
+        onClick={() => onCook(recipe)}
+        className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-xl transition-colors"
+      >
+        {hasMissingItems ? 'Cocinar de todas formas' : 'Cocinar hoy'}
+      </button>
+    </div>
+  );
+};
+
+// ============================================================================
+// ONBOARDING COMPONENT
+// ============================================================================
+
+const OnboardingFlow = ({ onComplete }) => {
+  const [step, setStep] = useState(0);
+  const [profile, setProfile] = useState({
+    age: '',
+    weight: '',
+    height: '',
+    activityLevel: 'moderado',
+    sleep: '7',
+    profession: '',
+    trainingType: 'hibrido',
+    trainingFrequency: '3',
+    trainingDuration: '45',
+    trainingTime: 'manana',
+    goals: [],
+    customGoals: '',
+    restrictions: []
+  });
+
+  const steps = [
+    'Estilo de vida',
+    'Entrenamiento',
+    'Objetivos',
+    'Restricciones'
+  ];
+
+  const restrictions = [
+    'Sin gluten',
+    'Vegetariano',
+    'Vegano',
+    'Sin lactosa',
+    'Sin frutos secos',
+    'Bajo sodio'
+  ];
+
+  const goals = [
+    'Perder grasa',
+    'Ganar músculo',
+    'Recomposición',
+    'Rendimiento deportivo',
+    'Salud general'
+  ];
+
+  const handleNext = () => {
+    if (step < steps.length - 1) {
+      setStep(step + 1);
+    } else {
+      StorageAPI.set('profile:user', profile);
+      onComplete();
+    }
+  };
+
+  const renderStep = () => {
+    switch (step) {
+      case 0: // Estilo de vida
+        return (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-900 mb-2">Edad</label>
+              <input
+                type="number"
+                value={profile.age}
+                onChange={(e) => setProfile({ ...profile, age: e.target.value })}
+                className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+                placeholder="25"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">Peso (kg)</label>
+                <input
+                  type="number"
+                  value={profile.weight}
+                  onChange={(e) => setProfile({ ...profile, weight: e.target.value })}
+                  className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="70"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">Altura (cm)</label>
+                <input
+                  type="number"
+                  value={profile.height}
+                  onChange={(e) => setProfile({ ...profile, height: e.target.value })}
+                  className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="180"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-900 mb-2">Nivel de actividad</label>
+              <select
+                value={profile.activityLevel}
+                onChange={(e) => setProfile({ ...profile, activityLevel: e.target.value })}
+                className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
+                <option value="sedentario">Sedentario</option>
+                <option value="ligero">Ligero (1-3 días/semana)</option>
+                <option value="moderado">Moderado (3-5 días/semana)</option>
+                <option value="intenso">Intenso (5+ días/semana)</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">Horas de sueño</label>
+                <input
+                  type="number"
+                  value={profile.sleep}
+                  onChange={(e) => setProfile({ ...profile, sleep: e.target.value })}
+                  className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="7"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">Profesión</label>
+                <input
+                  type="text"
+                  value={profile.profession}
+                  onChange={(e) => setProfile({ ...profile, profession: e.target.value })}
+                  className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="e.g. Ingeniero"
+                />
+              </div>
+            </div>
+          </div>
+        );
+
+      case 1: // Entrenamiento
+        return (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-900 mb-2">Tipo de entrenamiento</label>
+              <select
+                value={profile.trainingType}
+                onChange={(e) => setProfile({ ...profile, trainingType: e.target.value })}
+                className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
+                <option value="fuerza">Fuerza</option>
+                <option value="cardio">Cardio</option>
+                <option value="hibrido">Híbrido</option>
+                <option value="deporte">Deporte específico</option>
+                <option value="ninguno">No entreno regularmente</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">Frecuencia (días/sem)</label>
+                <input
+                  type="number"
+                  value={profile.trainingFrequency}
+                  onChange={(e) => setProfile({ ...profile, trainingFrequency: e.target.value })}
+                  className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="3"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">Duración (minutos)</label>
+                <input
+                  type="number"
+                  value={profile.trainingDuration}
+                  onChange={(e) => setProfile({ ...profile, trainingDuration: e.target.value })}
+                  className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  placeholder="45"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-900 mb-2">Momento del día</label>
+              <select
+                value={profile.trainingTime}
+                onChange={(e) => setProfile({ ...profile, trainingTime: e.target.value })}
+                className="w-full px-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500"
+              >
+                <option value="manana">Por la mañana</option>
+                <option value="tarde">Por la tarde</option>
+                <option value="noche">Por la noche</option>
+              </select>
+            </div>
+          </div>
+        );
+
+      case 2: // Objetivos
+        return (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-900 mb-3">Tus objetivos</label>
+              <div className="space-y-2">
+                {goals.map((goal) => (
+                  <button
+                    key={goal}
+                    onClick={() => {
+                      const updated = profile.goals.includes(goal)
+                        ? profile.goals.filter((g) => g !== goal)
+                        : [...profile.goals, goal];
+                      setProfile({ ...profile, goals: updated });
+                    }}
+                    className={`w-full text-left px-4 py-3 rounded-xl border-2 font-medium transition-colors ${
+                      profile.goals.includes(goal)
+                        ? 'bg-green-50 border-green-500 text-green-700'
+                        : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    {profile.goals.includes(goal) && <Check size={18} className="inline mr-2" />}
+                    {goal}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-900 mb-2">Algo más que añadir</label>
+              <textarea
+                value={profile.customGoals}
+                onChange={(e) => setProfile({ ...profile, customGoals: e.target.value })}
+                className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500 text-sm"
+                placeholder="e.g. Mejorar mi piel, tener más energía..."
+                rows={3}
+              />
+            </div>
+          </div>
+        );
+
+      case 3: // Restricciones
+        return (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-900 mb-3">Restricciones y preferencias</label>
+              <div className="flex flex-wrap gap-2">
+                {restrictions.map((restriction) => (
+                  <button
+                    key={restriction}
+                    onClick={() => {
+                      const updated = profile.restrictions.includes(restriction)
+                        ? profile.restrictions.filter((r) => r !== restriction)
+                        : [...profile.restrictions, restriction];
+                      setProfile({ ...profile, restrictions: updated });
+                    }}
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                      profile.restrictions.includes(restriction)
+                        ? 'bg-green-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {restriction}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-sm text-green-700">
+              <p className="font-semibold mb-1">¡Casi listo!</p>
+              <p>Tu perfil está completo. Presiona "Comenzar" para empezar a gestionar tu despensa.</p>
+            </div>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-amber-50 px-4 py-6">
+      <div className="max-w-2xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">Coach Nutricional</h1>
+          <p className="text-gray-600 mt-2">Vamos a conocerte un poco</p>
+        </div>
+
+        <Stepper steps={steps} currentStep={step} />
+
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100 mb-6">
+          {renderStep()}
+        </div>
+
+        <div className="flex gap-3">
+          {step > 0 && (
+            <button
+              onClick={() => setStep(step - 1)}
+              className="flex-1 py-3 rounded-xl border border-gray-300 text-gray-900 font-semibold hover:bg-gray-50 transition-colors"
+            >
+              Atrás
+            </button>
+          )}
+          <button
+            onClick={handleNext}
+            className="flex-1 py-3 rounded-xl bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors"
+          >
+            {step === steps.length - 1 ? 'Comenzar' : 'Siguiente'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================================
+// STATE REDUCER
+// ============================================================================
+
+const initialState = {
+  pantry: [],
+  recipes: [],
+  history: [],
+  ticketsProcessed: [],
+  loading: false,
+  error: null
+};
+
+const appReducer = (state, action) => {
+  switch (action.type) {
+    case 'SET_PANTRY':
+      return { ...state, pantry: action.payload };
+    case 'ADD_PANTRY_ITEMS': {
+      const updated = [...state.pantry];
+      action.payload.forEach((newItem) => {
+        const existing = updated.find((item) => item.name.toLowerCase() === newItem.name.toLowerCase());
+        if (existing) {
+          existing.quantity += newItem.quantity;
+        } else {
+          updated.push(newItem);
+        }
+      });
+      StorageAPI.set('pantry:items', updated);
+      return { ...state, pantry: updated };
+    }
+    case 'REMOVE_PANTRY_ITEM': {
+      const updated = state.pantry.filter((item) => item.name !== action.payload);
+      StorageAPI.set('pantry:items', updated);
+      return { ...state, pantry: updated };
+    }
+    case 'USE_RECIPE_ITEMS': {
+      const updated = state.pantry.map((item) => {
+        const usedAmount = action.payload.find(
+          (ing) => ing.name.toLowerCase() === item.name.toLowerCase()
+        );
+        if (usedAmount) {
+          return { ...item, quantity: Math.max(0, item.quantity - usedAmount.quantity) };
+        }
+        return item;
+      }).filter((item) => item.quantity > 0);
+
+      const history = [
+        {
+          timestamp: new Date().toISOString(),
+          recipe: action.recipe.titulo
+        },
+        ...state.history
+      ];
+
+      StorageAPI.set('pantry:items', updated);
+      StorageAPI.set('history:recipes', history);
+      return { ...state, pantry: updated, history };
+    }
+    case 'SET_RECIPES':
+      return { ...state, recipes: action.payload };
+    case 'SET_LOADING':
+      return { ...state, loading: action.payload, error: null };
+    case 'SET_ERROR':
+      return { ...state, loading: false, error: action.payload };
+    default:
+      return state;
+  }
+};
+
+// ============================================================================
+// MAIN APP
+// ============================================================================
+
+export default function PantryApp() {
+  const [tab, setTab] = useState('home');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [state, dispatch] = useReducer(appReducer, initialState);
+  const [profile, setProfile] = useState(null);
+  const fileInputRef = useRef(null);
+
+  // Load from storage
+  useEffect(() => {
+    const savedProfile = StorageAPI.get('profile:user');
+    const savedPantry = StorageAPI.get('pantry:items', []);
+    const savedHistory = StorageAPI.get('history:recipes', []);
+
+    if (!savedProfile) {
+      setShowOnboarding(true);
+    } else {
+      setProfile(savedProfile);
+    }
+
+    dispatch({ type: 'SET_PANTRY', payload: savedPantry });
+    if (savedHistory.length > 0) {
+      // Recipes from history already loaded
+    }
+  }, []);
+
+  const handleProfileComplete = () => {
+    const savedProfile = StorageAPI.get('profile:user');
+    setProfile(savedProfile);
+    setShowOnboarding(false);
+  };
+
+  // =========================================================================
+  // UPLOAD TICKET
+  // =========================================================================
+
+  const handleTicketUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !profile) return;
+
+    dispatch({ type: 'SET_LOADING', payload: true });
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result.split(',')[1];
+        const mediaType = file.type || 'image/jpeg';
+
+        const prompt = `Analiza este ticket de compra y extrae SOLO los ingredientes alimentarios.
+Responde ÚNICAMENTE en JSON válido, sin markdown, sin texto extra. Formato exacto:
+{
+  "items": [
+    { "name": "nombre del ingrediente", "quantity": número, "unit": "kg/l/unidad", "category": "proteina|carbohidrato|verdura|fruta|lacteo|grasa|otro" }
+  ]
+}`;
+
+        const messages = [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mediaType,
+                  data: base64
+                }
+              },
+              {
+                type: 'text',
+                text: prompt
+              }
+            ]
+          }
+        ];
+
+        const response = await callClaude(messages);
+        const parsed = parseClaudeJson(response);
+
+        dispatch({ type: 'ADD_PANTRY_ITEMS', payload: parsed.items });
+
+        // Save ticket to history
+        const tickets = StorageAPI.get('history:tickets', []);
+        tickets.unshift({
+          date: new Date().toISOString(),
+          itemsCount: parsed.items.length,
+          items: parsed.items.map((i) => i.name).join(', ')
+        });
+        StorageAPI.set('history:tickets', tickets);
+
+        dispatch({ type: 'SET_LOADING', payload: false });
+        setTab('pantry');
+      };
+      reader.readAsDataURL(file);
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: error.message });
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  };
+
+  // =========================================================================
+  // GENERATE RECIPES
+  // =========================================================================
+
+  const generateRecipes = async () => {
+    if (!profile || state.pantry.length === 0) {
+      dispatch({ type: 'SET_ERROR', payload: 'Necesitas perfil y despensa para generar recetas' });
+      return;
+    }
+
+    dispatch({ type: 'SET_LOADING', payload: true });
+
+    try {
+      const pantryStr = state.pantry
+        .map((item) => `${item.name} (${item.quantity}${item.unit})`)
+        .join(', ');
+
+      const prompt = `Eres un chef nutricionista personalizado. Basándote en:
+- Perfil: ${profile.age} años, ${profile.weight}kg, ${profile.height}cm, actividad ${profile.activityLevel}
+- Objetivos: ${profile.goals.join(', ') || 'salud general'}
+- Restricciones: ${profile.restrictions.join(', ') || 'ninguna'}
+- Despensa actual: ${pantryStr}
+
+Genera EXACTAMENTE 3 recetas que:
+1. Usen ingredientes que ya tiene
+2. Encajen con sus objetivos nutricionales
+3. Sean realizables en 30-60 minutos
+4. Tengan macros equilibradas
+
+Responde ÚNICAMENTE en JSON válido, sin markdown:
+{
+  "recetas": [
+    {
+      "titulo": "nombre corto",
+      "tiempo_min": 30,
+      "dificultad": "fácil|media|alta",
+      "macros": { "kcal": 0, "proteina_g": 0, "carbos_g": 0, "grasas_g": 0 },
+      "ingredientes_usados": [{ "name": "...", "quantity": 0, "unit": "..." }],
+      "ingredientes_faltan": [{ "name": "...", "quantity": 0, "unit": "..." }],
+      "pasos": ["paso 1", "paso 2", ...],
+      "encaje_objetivo": "frase corta de por qué encaja"
+    }
+  ]
+}`;
+
+      const response = await callClaude([{ role: 'user', content: prompt }]);
+      const parsed = parseClaudeJson(response);
+
+      dispatch({ type: 'SET_RECIPES', payload: parsed.recetas });
+      dispatch({ type: 'SET_LOADING', payload: false });
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: error.message });
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  };
+
+  const handleCookRecipe = (recipe) => {
+    dispatch({ type: 'USE_RECIPE_ITEMS', payload: recipe.ingredientes_usados, recipe });
+  };
+
+  if (showOnboarding && !profile) {
+    return <OnboardingFlow onComplete={handleProfileComplete} />;
+  }
+
+  // =========================================================================
+  // HOME TAB
+  // =========================================================================
+
+  const HomeTab = () => (
+    <div className="pb-24 px-4 pt-6">
+      <div className="max-w-2xl mx-auto">
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold text-gray-900">Hola 👋</h1>
+          <p className="text-gray-600 mt-1">
+            {profile?.age ? `${profile.age} años • ${profile.weight}kg • Objetivo: ${profile.goals?.[0] || 'salud general'}` : ''}
+          </p>
+        </div>
+
+        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-3xl p-6 text-white mb-6 shadow-lg">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-green-100 text-sm font-medium">Despensa actual</p>
+              <p className="text-4xl font-bold mt-2">{state.pantry.length}</p>
+              <p className="text-green-100 text-sm mt-1">ingredientes</p>
+            </div>
+            <ShoppingBag size={40} className="opacity-20" />
+          </div>
+        </div>
+
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={state.loading}
+          className="w-full bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-semibold py-4 rounded-2xl flex items-center justify-center gap-2 transition-colors shadow-md mb-6"
+        >
+          <Camera size={20} />
+          {state.loading ? 'Leyendo ticket...' : 'Subir ticket de compra'}
+        </button>
+
+        <button
+          onClick={generateRecipes}
+          disabled={state.loading || state.pantry.length === 0}
+          className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-semibold py-4 rounded-2xl flex items-center justify-center gap-2 transition-colors shadow-md"
+        >
+          <ChefHat size={20} />
+          {state.loading ? 'Buscando recetas...' : '¿Qué cocino hoy?'}
+        </button>
+
+        {state.recipes.length > 0 && (
+          <div className="mt-8">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Recetas sugeridas</h2>
+            <div className="space-y-4">
+              {state.recipes.slice(0, 2).map((recipe, idx) => (
+                <div key={idx} className="bg-white rounded-2xl p-4 border border-gray-100">
+                  <p className="font-semibold text-gray-900">{recipe.titulo}</p>
+                  <p className="text-xs text-gray-500 mt-1">{recipe.encaje_objetivo}</p>
+                  <button
+                    onClick={() => handleCookRecipe(recipe)}
+                    className="mt-3 w-full bg-green-100 text-green-700 font-semibold py-2 rounded-lg hover:bg-green-200 transition-colors text-sm"
+                  >
+                    Cocinar
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {state.error && (
+          <div className="mt-6 bg-red-50 border border-red-200 rounded-2xl p-4 flex gap-3">
+            <AlertCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-red-900 text-sm">{state.error}</p>
+              <button
+                onClick={() => generateRecipes()}
+                className="text-xs text-red-700 underline mt-2 font-medium"
+              >
+                Reintentar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // PANTRY TAB
+  // =========================================================================
+
+  const PantryTab = () => (
+    <div className="pb-24 px-4 pt-6">
+      <div className="max-w-2xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-gray-900">Mi Despensa</h2>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={state.loading}
+            className="p-2 rounded-lg bg-green-100 text-green-600 hover:bg-green-200 transition-colors disabled:opacity-50"
+          >
+            <Plus size={20} />
+          </button>
+        </div>
+
+        {state.pantry.length === 0 ? (
+          <EmptyState
+            icon={ShoppingBag}
+            title="Despensa vacía"
+            description="Sube fotos de tus tickets de compra para empezar a gestionar tus ingredientes"
+            action={
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-6 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors"
+              >
+                Subir primer ticket
+              </button>
+            }
+          />
+        ) : (
+          <div className="space-y-3">
+            {state.pantry.map((item) => (
+              <PantryCard
+                key={item.name}
+                item={item}
+                onDelete={(name) => dispatch({ type: 'REMOVE_PANTRY_ITEM', payload: name })}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // RECIPES TAB
+  // =========================================================================
+
+  const RecipesTab = () => (
+    <div className="pb-24 px-4 pt-6">
+      <div className="max-w-2xl mx-auto">
+        <h2 className="text-2xl font-bold text-gray-900 mb-6">Recetas</h2>
+
+        {state.loading ? (
+          <LoadingPulse label="Buscando recetas que encajen contigo…" />
+        ) : state.recipes.length === 0 ? (
+          <EmptyState
+            icon={ChefHat}
+            title="Sin recetas aún"
+            description="Genera recetas personalizadas basadas en tu despensa y objetivos"
+            action={
+              <button
+                onClick={generateRecipes}
+                disabled={state.pantry.length === 0}
+                className="px-6 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition-colors disabled:opacity-50"
+              >
+                Generar recetas
+              </button>
+            }
+          />
+        ) : (
+          <div className="space-y-4">
+            {state.recipes.map((recipe, idx) => (
+              <RecipeCard
+                key={idx}
+                recipe={recipe}
+                onCook={handleCookRecipe}
+              />
+            ))}
+            <button
+              onClick={generateRecipes}
+              className="w-full py-3 rounded-xl border-2 border-green-600 text-green-600 font-semibold hover:bg-green-50 transition-colors mt-6"
+            >
+              Generar nuevas recetas
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // PROFILE TAB
+  // =========================================================================
+
+  const ProfileTab = () => (
+    <div className="pb-24 px-4 pt-6">
+      <div className="max-w-2xl mx-auto">
+        <h2 className="text-2xl font-bold text-gray-900 mb-6">Mi Perfil</h2>
+
+        {profile && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl p-4 border border-gray-100">
+              <p className="text-xs text-gray-500 font-semibold uppercase">Datos personales</p>
+              <p className="text-gray-900 font-semibold mt-2">{profile.age} años • {profile.weight}kg • {profile.height}cm</p>
+              <p className="text-sm text-gray-600 mt-1">Actividad: {profile.activityLevel}</p>
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 border border-gray-100">
+              <p className="text-xs text-gray-500 font-semibold uppercase">Entrenamiento</p>
+              <p className="text-gray-900 font-semibold mt-2">{profile.trainingType}</p>
+              <p className="text-sm text-gray-600 mt-1">{profile.trainingFrequency}x/semana • {profile.trainingDuration} min</p>
+            </div>
+
+            <div className="bg-white rounded-2xl p-4 border border-gray-100">
+              <p className="text-xs text-gray-500 font-semibold uppercase">Objetivos</p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {profile.goals.map((goal) => (
+                  <span key={goal} className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-full font-medium">
+                    {goal}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {profile.restrictions.length > 0 && (
+              <div className="bg-white rounded-2xl p-4 border border-gray-100">
+                <p className="text-xs text-gray-500 font-semibold uppercase">Restricciones</p>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {profile.restrictions.map((r) => (
+                    <span key={r} className="bg-amber-100 text-amber-700 text-xs px-3 py-1 rounded-full font-medium">
+                      {r}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                StorageAPI.clear('profile:user');
+                StorageAPI.clear('pantry:items');
+                StorageAPI.clear('history:recipes');
+                setShowOnboarding(true);
+              }}
+              className="w-full mt-6 py-3 rounded-xl border border-red-200 text-red-600 font-semibold hover:bg-red-50 transition-colors"
+            >
+              Resetear todo
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // =========================================================================
+  // RENDER
+  // =========================================================================
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {tab === 'home' && <HomeTab />}
+      {tab === 'pantry' && <PantryTab />}
+      {tab === 'recipes' && <RecipesTab />}
+      {tab === 'profile' && <ProfileTab />}
+
+      <TabBar current={tab} onChange={setTab} />
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleTicketUpload}
+        className="hidden"
+        capture="environment"
+      />
+    </div>
+  );
+}
